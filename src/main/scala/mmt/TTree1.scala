@@ -14,17 +14,34 @@ object TTree1 {
   private def InitialKeyCapacity = 4
   private def MaxKeyCapacity = 32
 
+  private def initKV(k: Any, v: Any) = {
+    val kv = new Array[Any](2 * InitialKeyCapacity)
+    kv(0) = k
+    kv(1) = v
+    kv
+  }
+
   sealed class Node[A,B](var state: Byte,
-                         var height: Byte,
-                         var numKeys: Short,
+                         height0: Int,
+                         numKeys0: Int,
                          var left: Node[A,B],
                          var right: Node[A,B],
                          var keysAndValues: Array[Any]) {
+    var _height = height0.asInstanceOf[Short]
+    var _numKeys = numKeys0.asInstanceOf[Short]
+
+    def height = _height : Int
+    def height_=(v: Int) { _height = v.asInstanceOf[Short] }
+    def numKeys = _numKeys : Int
+    def numKeys_=(v: Int) { _numKeys = v.asInstanceOf[Short] }
+
+    def this(k: A, v: B) = this(Unshared, 1, 1, null, null, initKV(k, v))
 
     def key(i: Int) = keysAndValues(2 * i).asInstanceOf[A]
     def value(i: Int) = keysAndValues(2 * i + 1).asInstanceOf[B]
 
-    @tailrec def find(k: A)(implicit cmp: Ordering[A]): Any = {
+    // TODO: @tailrec
+    def find(k: A)(implicit cmp: Ordering[A]): Any = {
       var min = 0
       var max = numKeys - 1
 
@@ -55,7 +72,7 @@ object TTree1 {
     }
 
     /** On entry, k > key(min-1) && k < key(max+1) */
-    @tailrec def keySearch(k: A, min: Int, max: Int)(implicit cmp: Ordering[A]): Int = {
+    @tailrec final def keySearch(k: A, min: Int, max: Int)(implicit cmp: Ordering[A]): Int = {
       if (min > max) {
         // min == max + 1, so k > key(min-1) && k < key(min).  Insert at min
         -(min + 1)
@@ -80,7 +97,7 @@ object TTree1 {
         if (right != null) right.markShared()
 
         // leave keysAndValues shared for now
-        return new Node(SharedKeys, height, numKeys, left, right, keysAndValues)
+        return new Node[A,B](SharedKeys, height, numKeys, left, right, keysAndValues)
       }
     }
 
@@ -90,7 +107,8 @@ object TTree1 {
 
 
     /** Returns the previous value, or NotFound. */
-    @tailrec def update(k: A, v: B)(implicit cmp: Ordering[A]): Any = {
+    // TODO: @tailrec
+    def update(k: A, v: B)(implicit cmp: Ordering[A]): Any = {
       var min = 0
       var max = numKeys - 1
 
@@ -102,7 +120,7 @@ object TTree1 {
           return right.update(k, v)
         }
         if (c == 0)
-          return update(k, v, i)
+          return update(k, v, max)
         max -= 1
       }
 
@@ -114,7 +132,7 @@ object TTree1 {
           return left.update(k, v)
         }
         if (c == 0)
-          return update(k, v, i)
+          return update(k, v, min)
         min += 1
       }
 
@@ -148,7 +166,7 @@ object TTree1 {
         if (c > 0) {
           val n = right.unshare.insert(k, v)
           if (n ne right) right = n // avoid M and E states for nodes near the root
-          return rotateLeftIfNeeded()
+          return fixHeightAndRebalance()
         }
         assert(c != 0) // this is insert, not put
         max -= 1
@@ -160,7 +178,7 @@ object TTree1 {
         if (c < 0) {
           val n = left.unshare.insert(k, v)
           if (n ne left) left = n
-          return rotateRightIfNeeded()
+          return fixHeightAndRebalance()
         }
         assert(c != 0)
         min += 1
@@ -168,26 +186,132 @@ object TTree1 {
 
       // search remaining keys, failing if found
       val i = -(keySearch(k, min, max) + 1)
-      assert(i >= 0 && i < numKeys)
+      assert(i > 0 || (i == 0 && left == null))
+      assert(i < numKeys || (i == numKeys && right == null))
+
+      return insert(k, v, i)
+    }
+
+    def insert(k: A, v: B, i: Int): Node[A,B] = {
+      if (i == MaxKeyCapacity) {
+        // new right node needed
+        assert(right == null)
+        right = new Node(k, v)
+        return fixHeightAndRebalance()
+      }
+
+      // TODO: clean up code
 
       // this will push down the largest key if necessary, and clone if necessary
       val fixLater = prepareForInsert()
 
-      // slide down
       Array.copy(keysAndValues, 2 * i, keysAndValues, 2 * i + 2, 2 * (numKeys - i))
       keysAndValues(2 * i) = k
       keysAndValues(2 * i + 1) = v
       numKeys += 1
 
-      return if (fixLater) rotateLeftIfNeeded() else this 
+      return if (fixLater) fixHeightAndRebalance() else this
+    }
+
+    def prepareForInsert(): Boolean = {
+      if (numKeys * 2 < keysAndValues.length) {
+        // no resize or push-down needed
+        unshareKeys()
+        false
+      } else if (numKeys < MaxKeyCapacity) {
+        // resize is sufficient, unshare and resize at the same time
+        val kv = new Array[Any](numKeys * 4)
+        Array.copy(keysAndValues, 0, kv, 0, numKeys * 2)
+        keysAndValues = kv
+        state = Unshared
+
+        // no push-down, so no rebalancing needed later
+        false
+      } else {
+        // this node is full, move its maximum entry to the right
+        unshareKeys()
+        val k = key(numKeys - 1)
+        val v = value(numKeys - 1)
+        right = if (right == null) new Node(k, v) else right.unshare.pushMin(k, v)
+        numKeys -= 1
+
+        // caller must recompute height and check balance
+        true
+      }
+    }
+
+    def pushMin(k: A, v: B): Node[A,B] = {
+      if (left == null && numKeys < MaxKeyCapacity) {
+        // this is the left-most descendant of the right child of the pushing
+        // node, and has space for us
+        return insert(k, v, 0)
+      } else {
+        left = if (left == null) new Node(k, v) else left.unshare.pushMin(k, v)
+        return fixHeightAndRebalance()
+      }
+    }
+
+    def fixHeightAndRebalance(): Node[A,B] = {
+      val hL = height(left)
+      val hR = height(right)
+      val bal = hL - hR
+      if (bal > 1) {
+        // Left is too large, rotate right.  If left.right is larger than
+        // left.left then rotating right will lead to a -2 balance, so
+        // first we have to rotateLeft on left.
+        if (left.balance < 0)
+          rotateRightOverLeft()
+        else
+          rotateRight()
+      } else if (bal < -1) {
+        if (right.balance > 0)
+          rotateLeftOverRight()
+        else
+          rotateLeft()
+      } else {
+        // no rotations needed, just update height
+        val h = 1 + math.max(hL, hR)
+        if (h != height) height = h
+        this
+      }
+    }
+
+    def height(node: Node[_,_]): Int = if (node == null) 0 else node.height
+
+    def balance = height(left) - height(right)
+
+    def rotateRight(): Node[A,B] = {
+      val nL = left.unshare
+      this.left = nL.right
+      nL.right = this
+      this.height = 1 + math.max(height(left), height(right))
+      nL.height = 1 + math.max(height(nL.left), this.height)
+      nL
+    }
+
+    def rotateRightOverLeft(): Node[A,B] = {
+      this.left = this.left.unshare.rotateRight()
+      rotateRight()
+    }
+
+    def rotateLeft(): Node[A,B] = {
+      val nR = right.unshare
+      this.right = nR.left
+      nR.left = this
+      this.height = 1 + math.max(height(right), height(left))
+      nR.height = 1 + math.max(height(nR.right), this.height)
+      nR
+    }
+
+    def rotateLeftOverRight(): Node[A,B] = {
+      this.right = this.right.unshare.rotateLeft()
+      rotateLeft()
     }
   }
 
   abstract class Tree[A,B](implicit cmp: Ordering[A]) {
-    import TTree1._
 
-    protected var _root: Node[A,B] =
-        new Node(Unshared, 1, 0, null, null, new Array[Any](2 * InitialKeyCapacity))
+    protected var _root = new Node[A,B](Unshared, 1, 0, null, null, new Array[Any](2 * InitialKeyCapacity))
     protected var _size = 0
 
     def isEmpty: Boolean = (_size == 0)
@@ -206,12 +330,78 @@ object TTree1 {
     }
 
     def defaultValue(key: A): B = throw new IllegalArgumentException
+
+    def elements: Iterator[(A,B)] = new Iterator[(A,B)] {
+      private val stack = new Array[Node[A,B]](_root.height)
+      private var depth = 0
+      private var index = -1
+      private var avail: (A,B) = null
+      pushMin(_root)
+      advance()
+
+      @tailrec private def pushMin(node: Node[A,B]) {
+        if (node != null) {
+          stack(depth) = node
+          depth += 1
+          pushMin(node.left)
+        }
+      }
+
+      // TODO: fix
+      private def advance() {
+        if (depth == 0) {
+          avail = null
+          return
+        }
+
+        var n = stack(depth - 1)
+        if (index + 1 < n.numKeys) {
+          // there is another entry in this node
+          index += 1
+        } else {
+          index = 0
+          if (n.right != null) {
+            // the next entry is in the left-most descendent of n.right.  Pop
+            // ourself first
+            depth -= 1
+            pushMin(n.right)
+          } else {
+            // go back to the ancestor
+            stack(depth - 1) = null
+            depth -= 1
+            if (depth == 0) {
+              avail = null
+              return
+            }
+          }
+          n = stack(depth - 1)
+        }
+        avail = (n.key(index), n.value(index))
+      }
+
+      def hasNext = (avail != null)
+      
+      def next = {
+        val z = avail
+        if (z == null) throw new IllegalStateException
+        advance()
+        z
+      }
+    }
   }
 
-  class MutableTree[A,B](implicit cmp: Ordering[A]) extends Tree {
-    def clone: MutableTree[A,B] = {
+  class MutableTree[A,B](implicit cmp: Ordering[A]) extends Tree[A,B] {
+    override def clone: MutableTree[A,B] = {
       _root.state = SharedAll
-      new MutableTree(_root, _size)
+      //new MutableTree(_root, _size)
+      throw new Error
+    }
+
+    def update(key: A, value: B) {
+      if (NotFound == _root.update(key, value)) {
+        _root = _root.insert(key, value)
+        _size += 1
+      }
     }
 
     def put(key: A, value: B): Option[B] = _root.update(key, value) match {
