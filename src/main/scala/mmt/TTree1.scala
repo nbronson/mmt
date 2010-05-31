@@ -290,7 +290,7 @@ object TTree1 {
     }
 
     def rotateRightOverLeft(): Node[A,B] = {
-      this.left = this.left.unshare.rotateRight()
+      this.left = this.left.unshare.rotateLeft()
       rotateRight()
     }
 
@@ -304,8 +304,37 @@ object TTree1 {
     }
 
     def rotateLeftOverRight(): Node[A,B] = {
-      this.right = this.right.unshare.rotateLeft()
+      this.right = this.right.unshare.rotateRight()
       rotateLeft()
+    }
+
+    @tailrec final def minKey: A = if (left != null) left.minKey else key(0)
+
+    @tailrec final def maxKey: A = if (right != null) right.maxKey else key(numKeys - 1)
+
+    def computeSize: Int = {
+      numKeys + (if (left != null) left.computeSize else 0) + (if (right != null) right.computeSize else 0)
+    }
+
+    def validate(implicit cmp: Ordering[A]) {
+      if (numKeys == 0) {
+        // special case for root
+        assert(height == 1 && left == null && right == null)
+      } else {
+        assert(height == 1 + math.max(height(left), height(right)))
+        assert(math.abs(height(left) - height(right)) <= 1)
+        assert(numKeys > 0 && numKeys <= MaxKeyCapacity)
+        for (i <- 0 until numKeys - 1) assert(cmp.compare(key(i), key(i + 1)) < 0)
+        for (i <- numKeys until keysAndValues.length / 2) assert(key(i) == null)
+        if (left != null) {
+          assert(cmp.compare(left.maxKey, key(0)) < 0)
+          left.validate
+        }
+        if (right != null) {
+          assert(cmp.compare(key(numKeys - 1), right.minKey) < 0)
+          right.validate
+        }
+      }
     }
   }
 
@@ -349,34 +378,27 @@ object TTree1 {
 
       // TODO: fix
       private def advance() {
-        if (depth == 0) {
-          avail = null
-          return
-        }
-
-        var n = stack(depth - 1)
-        if (index + 1 < n.numKeys) {
-          // there is another entry in this node
-          index += 1
-        } else {
-          index = 0
-          if (n.right != null) {
-            // the next entry is in the left-most descendent of n.right.  Pop
-            // ourself first
-            depth -= 1
-            pushMin(n.right)
+        if (depth > 0) {
+          val n = stack(depth - 1)
+          if (index + 1 < n.numKeys) {
+            // there is another entry in this node
+            index += 1
           } else {
-            // go back to the ancestor
-            stack(depth - 1) = null
+            index = 0
             depth -= 1
-            if (depth == 0) {
-              avail = null
-              return
+            if (n.right != null) {
+              pushMin(n.right)
+            } else {
+              stack(depth) = null
             }
           }
-          n = stack(depth - 1)
         }
-        avail = (n.key(index), n.value(index))
+        if (depth > 0) {
+          val n = stack(depth - 1)
+          avail = (n.key(index), n.value(index))
+        } else {
+          avail = null
+        }
       }
 
       def hasNext = (avail != null)
@@ -387,6 +409,17 @@ object TTree1 {
         advance()
         z
       }
+    }
+
+    def validate {
+      assert(_size == _root.computeSize)
+      if (_size >= 2) {
+        for (entries <- elements.toSeq.sliding(2)) {
+          assert(cmp.compare(entries(0)._1, entries(1)._1) < 0)
+        }
+      }
+      assert(_size == elements.toSeq.size)
+      _root.validate
     }
   }
 
@@ -402,15 +435,20 @@ object TTree1 {
         _root = _root.insert(key, value)
         _size += 1
       }
+      validate
     }
 
     def put(key: A, value: B): Option[B] = _root.update(key, value) match {
       case NotFound => {
         _root = _root.insert(key, value)
         _size += 1
+        validate
         None
       }
-      case x => Some(x.asInstanceOf[B])
+      case x => {
+        validate
+        Some(x.asInstanceOf[B])
+      }
     }
   }
 }
