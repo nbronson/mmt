@@ -17,8 +17,8 @@ object TTree1 {
   private def SharedKeys = 1 : Byte
   private def SharedAll = 2 : Byte
 
-  private def InitialKeyCapacity = 7
-  private def MaxKeyCapacity = 31
+  private def InitialKeyCapacity = 15
+  private def MaxKeyCapacity = 15
   private def nextCapacity(cap: Int) = 2 * cap + 1
 
   private def initKV[A,B](k: A, v: B) = {
@@ -51,38 +51,33 @@ object TTree1 {
     def key(i: Int) = keysAndValues(2 * i).asInstanceOf[A]
     def value(i: Int) = keysAndValues(2 * i + 1).asInstanceOf[B]
 
-    @tailrec final def find(k: A)(implicit cmp: Ordering[A]): AnyRef = {
+    def find(k: A)(implicit cmp: Ordering[A]): AnyRef = {
       var min = 0
       var max = numKeys - 1
-      var next: Node[A,B] = null
 
       // go right?
       if (right != null) {
         val c = cmp.compare(k, key(max))
         if (c > 0)
-          next = right
+          return right.find(k)
         if (c == 0)
           return value(max).asInstanceOf[AnyRef]
         max -= 1
       }
 
       // go left?
-      if (next == null && left != null) {
+      if (left != null) {
         val c = cmp.compare(k, key(min))
         if (c < 0)
-          next = left
+          return left.find(k)
         if (c == 0)
           return value(min).asInstanceOf[AnyRef]
         min += 1
       }
 
-      if (next != null) {
-        next.find(k)
-      } else {
-        // search remaining keys
-        val i = keySearch(k, min, max)
-        if (i < 0) NotFound else value(i).asInstanceOf[AnyRef]
-      }
+      // search remaining keys
+      val i = keySearch(k, min, max)
+      if (i < 0) NotFound else value(i).asInstanceOf[AnyRef]
     }
 
     /** On entry, k > key(min-1) && k < key(max+1) */
@@ -196,7 +191,7 @@ object TTree1 {
         // this will push down the largest key if necessary, and clone if necessary
         val z = prepareForInsert()
 
-        Array.copy(keysAndValues, 2 * i, keysAndValues, 2 * i + 2, 2 * (numKeys - i))
+        System.arraycopy(keysAndValues, 2 * i, keysAndValues, 2 * i + 2, 2 * (numKeys - i))
         keysAndValues(2 * i) = k.asInstanceOf[AnyRef]
         keysAndValues(2 * i + 1) = v.asInstanceOf[AnyRef]
         numKeys += 1
