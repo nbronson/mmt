@@ -28,12 +28,16 @@ object TTree1 {
     kv
   }
 
-  sealed class Node[A,B](var state: Byte,
+  sealed class Node[A,B](var _state: Byte,
                          height0: Int,
                          numKeys0: Int,
                          var left: Node[A,B],
                          var right: Node[A,B],
                          var keysAndValues: Array[AnyRef]) {
+    // TODO: remove
+    def state = Unshared
+    def state_=(s: Byte) {}
+
     var _height = height0.asInstanceOf[Short]
     var _numKeys = numKeys0.asInstanceOf[Short]
 
@@ -47,7 +51,7 @@ object TTree1 {
     def key(i: Int) = keysAndValues(2 * i).asInstanceOf[A]
     def value(i: Int) = keysAndValues(2 * i + 1).asInstanceOf[B]
 
-    @tailrec final def find(k: A)(implicit cmp: Ordering[A]): Either[B,SearchResult] = {
+    @tailrec final def find(k: A)(implicit cmp: Ordering[A]): AnyRef = {
       var min = 0
       var max = numKeys - 1
       var next: Node[A,B] = null
@@ -58,7 +62,7 @@ object TTree1 {
         if (c > 0)
           next = right
         if (c == 0)
-          return Left(value(max))
+          return value(max).asInstanceOf[AnyRef]
         max -= 1
       }
 
@@ -68,7 +72,7 @@ object TTree1 {
         if (c < 0)
           next = left
         if (c == 0)
-          return Left(value(min))
+          return value(min).asInstanceOf[AnyRef]
         min += 1
       }
 
@@ -77,7 +81,7 @@ object TTree1 {
       } else {
         // search remaining keys
         val i = keySearch(k, min, max)
-        if (i < 0) Right(NotFound) else Left(value(i))
+        if (i < 0) NotFound else value(i).asInstanceOf[AnyRef]
       }
     }
 
@@ -132,7 +136,7 @@ object TTree1 {
 
 
     /** Returns the previous value, or NotFound. */
-    def put(k: A, v: B)(implicit cmp: Ordering[A]): Either[B,SearchResult] = {
+    def put(k: A, v: B)(implicit cmp: Ordering[A]): AnyRef = {
       var min = 0
       var max = numKeys - 1
 
@@ -141,14 +145,10 @@ object TTree1 {
         val c = cmp.compare(k, key(max))
         if (c > 0) {
           val z = unsharedRight.put(k, v)
-          return z match {
-            case Right(FixRequired) => Right(fixRight())
-            case _ => z
-          }
-          //return if (z eq FixRequired) fixRight() else z
+          return if (z eq FixRequired) fixRight() else z
         }
         if (c == 0)
-          return Left(update(k, v, max))
+          return update(k, v, max).asInstanceOf[AnyRef]
         max -= 1
       }
 
@@ -157,22 +157,18 @@ object TTree1 {
         val c = cmp.compare(k, key(min))
         if (c < 0) {
           val z = unsharedLeft.put(k, v)
-          return z match {
-            case Right(FixRequired) => Right(fixLeft())
-            case _ => z
-          }
-          //return if (z eq FixRequired) fixLeft() else z
+          return if (z eq FixRequired) fixLeft() else z
         }
         if (c == 0)
-          return Left(update(k, v, min))
+          return update(k, v, min).asInstanceOf[AnyRef]
         min += 1
       }
 
       val i = keySearch(k, min, max)
       if (i >= 0)
-        return Left(update(k, v, i))
+        return update(k, v, i).asInstanceOf[AnyRef]
       else
-        return Right(insert(k, v, -(i + 1)))
+        return insert(k, v, -(i + 1))
     }
 
     def update(k: A, v: B, i: Int): B = {
@@ -516,31 +512,25 @@ object TTree1 {
 
     def update(key: A, value: B) {
       val z = _root.put(key, value)
-      z match {
-        case Left(x) => {}
-        case Right(FixRequired) => {
-          _root = _root.fixHeightAndRebalance()
-          _size += 1
-        }
-        case Right(NotFound) => {
-          _size += 1
-        }
+      if (z eq FixRequired) {
+        _root = _root.fixHeightAndRebalance()
+        _size += 1
+      } else if (z eq NotFound) {
+        _size += 1
       }
     }
 
     def put(key: A, value: B): Option[B] = {
       val z = _root.put(key, value)
-      z match {
-        case Left(x) => Some(x)
-        case Right(FixRequired) => {
-          _root = _root.fixHeightAndRebalance()
-          _size += 1
-          None
-        }
-        case Right(NotFound) => {
-          _size += 1
-          None
-        }
+      if (z eq FixRequired) {
+        _root = _root.fixHeightAndRebalance()
+        _size += 1
+        None
+      } else if (z eq NotFound) {
+        _size += 1
+        None
+      } else {
+        Some(z.asInstanceOf[B])
       }
     }
   }
@@ -571,62 +561,72 @@ object TTree1 {
   }
 
   def Range = 1<<30
+  def PutPct = 50
 
   def testInt(rand: scala.util.Random) = {
-    test[Int](rand, () => rand.nextInt(Range))
+    test[Int]("Int", rand, () => rand.nextInt(Range))
   }
 
   def testShort(rand: scala.util.Random) = {
-    test[Short](rand, () => rand.nextInt(Range).asInstanceOf[Short])
+    test[Short]("Short", rand, () => rand.nextInt(Range).asInstanceOf[Short])
   }
 
   def testLong(rand: scala.util.Random) = {
-    test[Long](rand, () => rand.nextInt(Range).asInstanceOf[Long])
+    test[Long]("Long", rand, () => rand.nextInt(Range).asInstanceOf[Long])
   }
 
-  def test[A](rand: scala.util.Random, keyGen: () => A)(implicit cmp: Ordering[A]) {
+  def test[A](name: String, rand: scala.util.Random, keyGen: () => A)(implicit cmp: Ordering[A]) {
     cmpCount = 0
     val a = testTTree(rand, keyGen)
     val ac = cmpCount
     cmpCount = 0
     val b = testJavaTree(rand, keyGen)
     val bc = cmpCount
-    println("TTree: " + a + " nanos/op,  java.util.TreeMap: " + b + " nanos/op")
-//    println("  TTree: " + ac + " compares,  java.util.TreeMap: " + bc + " compares")
+    println(name + ": TTree: " + a + " nanos/op,  java.util.TreeMap: " + b + " nanos/op")
+    if (ac > 0) println("  TTree: " + ac + " compares,  java.util.TreeMap: " + bc + " compares")
   }
 
   def testTTree[A](rand: scala.util.Random, keyGen: () => A)(implicit cmp: Ordering[A]): Int = {
-    val t0 = System.currentTimeMillis
     val m = new MutableTree[A,String]
-    var i = 1000000
-    while (i > 0) {
-      val key = keyGen()
-      val pct = rand.nextInt(100)
-      if (pct < 80) {
-        m.contains(key)
-      } else {
-        m(key) = "abc"
+    var best = Long.MaxValue
+    for (group <- 1 until 1000) {
+      var i = 1000
+      val t0 = System.nanoTime
+      while (i > 0) {
+        val key = keyGen()
+        val pct = rand.nextInt(100)
+        if (pct < PutPct) {
+          m.contains(key)
+        } else {
+          m(key) = "abc"
+        }
+        i -= 1
       }
-      i -= 1
+      val elapsed = System.nanoTime - t0
+      best = best min elapsed
     }
-    //m.dumpBFs()
-    (System.currentTimeMillis - t0).intValue
+    (best / 1000).asInstanceOf[Int]
   }
 
   def testJavaTree[A](rand: scala.util.Random, keyGen: () => A)(implicit cmp: Ordering[A]): Int = {
-    val t0 = System.currentTimeMillis
     val m = new java.util.TreeMap[A,String](cmp)
-    var i = 1000000
-    while (i > 0) {
-      val key = keyGen()
-      val pct = rand.nextInt(100)
-      if (pct < 80) {
-        m.containsKey(key)
-      } else {
-        m.put(key, "abc")
+    var best = Long.MaxValue
+    for (group <- 1 until 1000) {
+      var i = 1000
+      val t0 = System.nanoTime
+      while (i > 0) {
+        val key = keyGen()
+        val pct = rand.nextInt(100)
+        if (pct < PutPct) {
+          m.containsKey(key)
+        } else {
+          m.put(key, "abc")
+        }
+        i -= 1
       }
-      i -= 1
+      val elapsed = System.nanoTime - t0
+      best = best min elapsed
     }
-    (System.currentTimeMillis - t0).intValue
+    (best / 1000).asInstanceOf[Int]
   }
 }
