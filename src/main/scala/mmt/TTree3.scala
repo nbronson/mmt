@@ -510,7 +510,7 @@ object TTree3 {
 //    }
 //  }
 
-  def main(args: Array[String]) {
+  def main0(args: Array[String]) {
     val rand = new scala.util.Random(0)
     for (pass <- 0 until 0) testInt(rand)
     println("------------- adding short")
