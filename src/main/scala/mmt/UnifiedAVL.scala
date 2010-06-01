@@ -27,6 +27,8 @@ object UnifiedAVL {
     def height_=(v: Int) { _height = v.asInstanceOf[Byte] }
 
     var shared = false
+    //def shared = false
+    //def shared_=(v: Boolean) {}
 
     @tailrec def find(k: A)(implicit cmp: Ordering[A]): Node[A,B] = {
       val c = cmp.compare(k, key)
@@ -330,7 +332,7 @@ object UnifiedAVL {
 //    }
 //  }
 
-  def main(args: Array[String]) {
+  def main0(args: Array[String]) {
     val rand = new scala.util.Random(0)
     for (pass <- 0 until 0) testInt(rand)
     println("------------- adding short")
