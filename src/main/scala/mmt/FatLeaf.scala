@@ -34,6 +34,8 @@ object FatLeaf {
 
     def this(es: Int, p: Node[A,B]) = this(es, p, new Array[AnyRef](2 * Capacity))
 
+    assert(height < 0 || parent != null)
+
     
     def height = _height: Int
     def height_=(v: Int) { _height = v.asInstanceOf[Byte] }
@@ -146,7 +148,7 @@ object FatLeaf {
     }
 
     def unshare(p: Node[A,B]): Node[A,B] = {
-      if (shared) {
+      if (!shared) {
         this
       } else if (isLeaf) {
         // clone the keys and values array as well
@@ -212,6 +214,8 @@ object FatLeaf {
     }
 
     def splittingInsert(k: A, v: B, i: Int) {
+      assert(extraSize == Capacity && height == 1)
+
       // we've got Capacity + 1 entries to distribute.  1 goes in this.
       val leftSize = (Capacity + 1) / 2
       val rightSize = Capacity + 1 - 1 - leftSize
@@ -260,13 +264,14 @@ object FatLeaf {
         j += 1
       }
 
-      // link the nodes properly, but let fix() recompute the height
+      // link the nodes properly
+      height = 2
       extraSize = 0
       left = newLeft
       right = newRight
 
-      // we've grown, so we might need to rebalance
-      fix()
+      // we've grown, so we might need to rebalance the parent
+      parent.fix()
     }
 
     def fix() {
@@ -275,8 +280,8 @@ object FatLeaf {
       // rootHolder
       if (h0 < 0) return
 
-      val hL = height(left)
-      val hR = height(right)
+      val hL = left.height
+      val hR = right.height
       val bal = hL - hR
       if (bal > 1) {
         // Left is too large, rotate right.  If left.right is larger than
@@ -306,23 +311,21 @@ object FatLeaf {
       }
     }
 
-    def height(node: Node[_,_]): Int = if (node == null) 0 else node.height
-
-    def balance = height(left) - height(right)
+    def balance = left.height - right.height
 
     def rotateRight(): Node[A,B] = {
       val nL = left.unshare(this)
       nL.parent = parent
 
       left = nL.right
-      if (left != null && left.parent != null)
+      if (!left.shared)
         left.parent = this
 
       nL.right = this
       parent = nL
 
-      height = 1 + math.max(height(left), height(right))
-      nL.height = 1 + math.max(height(nL.left), height)
+      height = 1 + math.max(left.height, right.height)
+      nL.height = 1 + math.max(nL.left.height, height)
 
       nL
     }
@@ -337,14 +340,14 @@ object FatLeaf {
       nR.parent = parent
 
       right = nR.left
-      if (right != null && right.parent != null)
+      if (!right.shared)
         right.parent = this
 
       nR.left = this
       parent = nR
 
-      height = 1 + math.max(height(right), height(left))
-      nR.height = 1 + math.max(height(nR.right), height)
+      height = 1 + math.max(right.height, left.height)
+      nR.height = 1 + math.max(nR.right.height, height)
 
       nR
     }
@@ -376,8 +379,8 @@ object FatLeaf {
         assert(left != null && (left.parent eq this))
         assert(right != null && (right.parent eq this))
         assert(extraSize == 0)
-        assert(height == 1 + math.max(height(left), height(right)))
-        assert(math.abs(height(left) - height(right)) <= 1)
+        assert(height == 1 + math.max(left.height, right.height))
+        assert(math.abs(left.height - right.height) <= 1)
         left.validate()
         right.validate()
       }
@@ -483,7 +486,7 @@ object FatLeaf {
 
     def update(key: A, value: B) {
       putImpl(key, value)
-      validate()
+      //validate()
     }
 
     def put(key: A, value: B): Option[B] = {
