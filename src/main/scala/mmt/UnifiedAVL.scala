@@ -4,11 +4,15 @@ import annotation.tailrec
 
 // UnifiedAVL
 
-private object UnifiedAVLNotFound
+private object UnifiedAVLNotFound extends UnifiedAVL.PutResult
+private object UnifiedAVLFixRequired extends UnifiedAVL.PutResult
 
 object UnifiedAVL {
   
   import mmt.{UnifiedAVLNotFound => NotFound}
+  import mmt.{UnifiedAVLFixRequired => FixRequired}
+
+  trait PutResult
 
   final class Node[A,B](height0: Int,
                         var left: Node[A,B],
@@ -35,25 +39,27 @@ object UnifiedAVL {
       }
     }
 
-    def unsharedLeft: Node[A,B] = {
+    def unsharedLeft(): Node[A,B] = {
       if (left != null && left.shared)
-        left = left.unshare
+        left = left.unshare()
       left
     }
 
-    def unsharedRight: Node[A,B] = {
+    def unsharedRight(): Node[A,B] = {
       if (right != null && right.shared)
-        right = right.unshare
+        right = right.unshare()
       right
     }
 
-    def unshare: Node[A,B] = {
+    def unshare(): Node[A,B] = {
       if (!shared) {
         this
       } else {
         // push down the mark
-        if (left != null) left.markShared()
-        if (right != null) right.markShared()
+        if (left != null)
+          left.markShared()
+        if (right != null)
+          right.markShared()
 
         return new Node(height, left, right, key, value)
       }
@@ -72,11 +78,10 @@ object UnifiedAVL {
       if (c < 0) {
         if (left == null) {
           left = new Node(k, v)
-          NotFound
+          FixRequired
         } else {
           val z = unsharedLeft.put(k, v)
-          if (z eq NotFound) fixLeft()
-          z
+          if (z eq FixRequired) fixLeft() else z
         }
       } else if (c > 0) {
         if (right == null) {
@@ -84,8 +89,7 @@ object UnifiedAVL {
           NotFound
         } else {
           val z = unsharedRight.put(k, v)
-          if (z eq NotFound) fixRight()
-          z
+          if (z eq FixRequired) fixRight() else z
         }
       } else {
         val z = value
@@ -94,16 +98,26 @@ object UnifiedAVL {
       }
     }
 
-    def fixLeft() {
-      val n = left.fix()
-      if (n ne left)
-        left = n
+    def fixLeft(): PutResult = {
+      val prevHeight = left.height
+      val newLeft = left.fix()
+      if (newLeft ne left)
+        left = newLeft
+      if (prevHeight == newLeft.height)
+        NotFound
+      else
+        FixRequired
     }
 
-    def fixRight() {
-      val n = right.fix()
-      if (n ne right)
-        right = n
+    def fixRight(): PutResult = {
+      val prevHeight = right.height
+      val newRight = right.fix()
+      if (newRight ne right)
+        right = newRight
+      if (prevHeight == newRight.height)
+        NotFound
+      else
+        FixRequired
     }
 
     def fix(): Node[A,B] = {
@@ -272,9 +286,14 @@ object UnifiedAVL {
       if (_root == null) {
         _root = new Node(key, value)
         _size = 1
-      } else if (_root.put(key, value) eq NotFound) {
-        _root = _root.fix()
-        _size += 1
+      } else {
+        val z = _root.put(key, value)
+        if (z eq FixRequired) {
+          _root = _root.fix()
+          _size += 1
+        } else if (z eq NotFound) {
+          _size += 1
+        }
       }
 //      validate
     }
@@ -286,10 +305,13 @@ object UnifiedAVL {
         None
       } else {
         val z = _root.put(key, value)
-        if (z eq NotFound) {
+        if (z eq FixRequired) {
           _root = _root.fix()
           _size += 1
 //          validate
+          None
+        } else if (z eq NotFound) {
+          _size += 1
           None
         } else {
 //          validate
@@ -299,50 +321,98 @@ object UnifiedAVL {
     }
   }
 
-  def main1(args: Array[String]) {
-    val rand = new scala.util.Random
-    for (pass <- 0 until 50) test(rand)
-  }
+  var cmpCount = 0
 
-  def test(rand: scala.util.Random) {
-    val a = testMyTree(rand)
-    val b = 0 // testJavaTree(rand)
-    println("MyTree: " + a + " nanos/op,  java.util.TreeMap: " + b + " nanos/op")
-  }
+//  implicit val myOrder = new Ordering[Int] {
+//    def compare(x: Int, y: Int): Int = {
+//      cmpCount += 1
+//      if (x < y) -1 else if (x == y) 0 else 1
+//    }
+//  }
 
-  def testMyTree(rand: scala.util.Random): Int = {
-    val t0 = System.currentTimeMillis
-    val m = new MutableTree[Int,String]
-    var i = 1000000
-    while (i > 0) {
-      val key = rand.nextInt(10000)
-      val pct = rand.nextInt(100)
-      if (pct < 80) {
-        m.contains(key)
-      } else {
-        m(key) = "abc"
-      }
-      i -= 1
-      if (i == 100000)
-        m.contains(0)
+  def main(args: Array[String]) {
+    val rand = new scala.util.Random(0)
+    for (pass <- 0 until 0) testInt(rand)
+    println("------------- adding short")
+    for (pass <- 0 until 10) {
+      testInt(rand)
+      testShort(rand)
     }
-    (System.currentTimeMillis - t0).intValue
+    println("------------- adding long")
+    for (pass <- 0 until 10) {
+      testInt(rand)
+      testShort(rand)
+      testLong(rand)
+    }
   }
 
-  def testJavaTree(rand: scala.util.Random): Int = {
-    val t0 = System.currentTimeMillis
-    val m = new java.util.TreeMap[Int,String](implicitly[Ordering[Int]])
-    var i = 1000000
-    while (i > 0) {
-      val key = rand.nextInt(10000)
-      val pct = rand.nextInt(100)
-      if (pct < 80) {
-        m.containsKey(key)
-      } else {
-        m.put(key, "abc")
+  def Range = 1<<21
+  def GetPct = 0
+
+  def testInt(rand: scala.util.Random) = {
+    test[Int]("Int", rand, () => rand.nextInt(Range))
+  }
+
+  def testShort(rand: scala.util.Random) = {
+    test[Short]("Short", rand, () => rand.nextInt(Range).asInstanceOf[Short])
+  }
+
+  def testLong(rand: scala.util.Random) = {
+    test[Long]("Long", rand, () => rand.nextInt(Range).asInstanceOf[Long])
+  }
+
+  def test[A](name: String, rand: scala.util.Random, keyGen: () => A)(implicit cmp: Ordering[A]) {
+    cmpCount = 0
+    val a = testTTree(rand, keyGen)
+    val ac = cmpCount
+    cmpCount = 0
+    val b = testJavaTree(rand, keyGen)
+    val bc = cmpCount
+    println(name + ": UnifiedAVL: " + a + " nanos/op,  java.util.TreeMap: " + b + " nanos/op")
+    if (ac > 0) println("  UnifiedAVL: " + ac + " compares,  java.util.TreeMap: " + bc + " compares")
+  }
+
+  def testTTree[A](rand: scala.util.Random, keyGen: () => A)(implicit cmp: Ordering[A]): Int = {
+    val m = new MutableTree[A,String]
+    var best = Long.MaxValue
+    for (group <- 1 until 10000) {
+      var i = 1000
+      val t0 = System.nanoTime
+      while (i > 0) {
+        val key = keyGen()
+        val pct = rand.nextInt(100)
+        if (pct < GetPct) {
+          m.contains(key)
+        } else {
+          m(key) = "abc"
+        }
+        i -= 1
       }
-      i -= 1
+      val elapsed = System.nanoTime - t0
+      best = best min elapsed
     }
-    (System.currentTimeMillis - t0).intValue
+    (best / 1000).asInstanceOf[Int]
+  }
+
+  def testJavaTree[A](rand: scala.util.Random, keyGen: () => A)(implicit cmp: Ordering[A]): Int = {
+    val m = new java.util.TreeMap[A,String](cmp)
+    var best = Long.MaxValue
+    for (group <- 1 until 10000) {
+      var i = 1000
+      val t0 = System.nanoTime
+      while (i > 0) {
+        val key = keyGen()
+        val pct = rand.nextInt(100)
+        if (pct < GetPct) {
+          m.containsKey(key)
+        } else {
+          m.put(key, "abc")
+        }
+        i -= 1
+      }
+      val elapsed = System.nanoTime - t0
+      best = best min elapsed
+    }
+    (best / 1000).asInstanceOf[Int]
   }
 }
