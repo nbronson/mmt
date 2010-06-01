@@ -4,10 +4,14 @@ import annotation.tailrec
 
 // TTree1
 
-private object TTree1KeyNotFound
+private object TTree1NotFound extends TTree1.SearchResult
+private object TTree1FixRequired extends TTree1.SearchResult
 
 object TTree1 {
-  import mmt.{TTree1KeyNotFound => NotFound}
+  trait SearchResult
+
+  import mmt.{TTree1NotFound => NotFound}
+  import mmt.{TTree1FixRequired => FixRequired}
 
   private def Unshared = 0 : Byte
   private def SharedKeys = 1 : Byte
@@ -41,52 +45,41 @@ object TTree1 {
     def this(k: A, v: B) = this(Unshared, 1, 1, null, null, initKV(k, v))
 
     def key(i: Int) = keysAndValues(2 * i).asInstanceOf[A]
-    def value(i: Int) = keysAndValues(2 * i + 1)
+    def value(i: Int) = keysAndValues(2 * i + 1).asInstanceOf[B]
 
-    @tailrec final def find(k: A)(implicit cmp: Ordering[A]): AnyRef = {
-      val i = keySearch(k, 0, numKeys - 1)
-      if (i >= 0) {
-        value(i)
-      } else if (-(i + 1) == 0 && left != null)
-        left.find(k)
-      else if (-(i + 1) == numKeys && right != null)
-        right.find(k)
-      else
-        NotFound
+    @tailrec final def find(k: A)(implicit cmp: Ordering[A]): Either[B,SearchResult] = {
+      var min = 0
+      var max = numKeys - 1
+      var next: Node[A,B] = null
+
+      // go right?
+      if (right != null) {
+        val c = cmp.compare(k, key(max))
+        if (c > 0)
+          next = right
+        if (c == 0)
+          return Left(value(max))
+        max -= 1
+      }
+
+      // go left?
+      if (next == null && left != null) {
+        val c = cmp.compare(k, key(min))
+        if (c < 0)
+          next = left
+        if (c == 0)
+          return Left(value(min))
+        min += 1
+      }
+
+      if (next != null) {
+        next.find(k)
+      } else {
+        // search remaining keys
+        val i = keySearch(k, min, max)
+        if (i < 0) Right(NotFound) else Left(value(i))
+      }
     }
-
-//      var min = 0
-//      var max = numKeys - 1
-//      var next: Node[A,B] = null
-//
-//      // go right?
-//      if (right != null) {
-//        val c = cmp.compare(k, key(max))
-//        if (c > 0)
-//          next = right
-//        if (c == 0)
-//          return value(max)
-//        max -= 1
-//      }
-//
-//      // go left?
-//      if (next == null && left != null) {
-//        val c = cmp.compare(k, key(min))
-//        if (c < 0)
-//          next = left
-//        if (c == 0)
-//          return value(min)
-//        min += 1
-//      }
-//
-//      if (next != null) {
-//        next.find(k)
-//      } else {
-//        // search remaining keys
-//        val i = keySearch(k, min, max)
-//        if (i < 0) NotFound else value(i)
-//      }
-//    }
 
     /** On entry, k > key(min-1) && k < key(max+1) */
     @tailrec final def keySearch(k: A, min: Int, max: Int)(implicit cmp: Ordering[A]): Int = {
@@ -105,13 +98,27 @@ object TTree1 {
       }
     }
 
+    def unsharedLeft: Node[A,B] = {
+      if (left != null && left.state == SharedAll)
+        left = left.unshare
+      left
+    }
+
+    def unsharedRight: Node[A,B] = {
+      if (right != null && right.state == SharedAll)
+        right = right.unshare
+      right
+    }
+
     def unshare: Node[A,B] = {
       if (state != SharedAll)
         this
       else {
         // push down the mark
-        if (left != null) left.markShared()
-        if (right != null) right.markShared()
+        if (left != null)
+          left.markShared()
+        if (right != null)
+          right.markShared()
 
         // leave keysAndValues shared for now
         return new Node[A,B](SharedKeys, height, numKeys, left, right, keysAndValues)
@@ -119,62 +126,56 @@ object TTree1 {
     }
 
     def markShared() {
-      if (state != SharedAll) state = SharedAll
+      if (state != SharedAll)
+        state = SharedAll
     }
 
 
     /** Returns the previous value, or NotFound. */
-    // TODO: @tailrec
-    def update(k: A, v: B)(implicit cmp: Ordering[A]): AnyRef = {
-      val i = keySearch(k, 0, numKeys - 1)
-      if (i >= 0) {
-        // hit
-        update(k, v, i)
-      } else if (-(i + 1) == 0 && left != null) {
-        if (left.state == SharedAll) left = left.unshare
-        left.update(k, v)
-      } else if (-(i + 1) == numKeys && right != null) {
-        if (right.state == SharedAll) right = right.unshare
-        right.find(k)
-      } else {
-        NotFound
+    def put(k: A, v: B)(implicit cmp: Ordering[A]): Either[B,SearchResult] = {
+      var min = 0
+      var max = numKeys - 1
+
+      // go right?
+      if (right != null) {
+        val c = cmp.compare(k, key(max))
+        if (c > 0) {
+          val z = unsharedRight.put(k, v)
+          return z match {
+            case Right(FixRequired) => Right(fixRight())
+            case _ => z
+          }
+          //return if (z eq FixRequired) fixRight() else z
+        }
+        if (c == 0)
+          return Left(update(k, v, max))
+        max -= 1
       }
+
+      // go left?
+      if (left != null) {
+        val c = cmp.compare(k, key(min))
+        if (c < 0) {
+          val z = unsharedLeft.put(k, v)
+          return z match {
+            case Right(FixRequired) => Right(fixLeft())
+            case _ => z
+          }
+          //return if (z eq FixRequired) fixLeft() else z
+        }
+        if (c == 0)
+          return Left(update(k, v, min))
+        min += 1
+      }
+
+      val i = keySearch(k, min, max)
+      if (i >= 0)
+        return Left(update(k, v, i))
+      else
+        return Right(insert(k, v, -(i + 1)))
     }
 
-//      var min = 0
-//      var max = numKeys - 1
-//
-//      // go right?
-//      if (right != null) {
-//        val c = cmp.compare(k, key(max))
-//        if (c > 0) {
-//          if (right.state == SharedAll) right = right.unshare
-//          return right.update(k, v)
-//        }
-//        if (c == 0)
-//          return update(k, v, max)
-//        max -= 1
-//      }
-//
-//      // go left?
-//      if (left != null) {
-//        val c = cmp.compare(k, key(min))
-//        if (c < 0) {
-//          if (left.state == SharedAll) left = left.unshare
-//          return left.update(k, v)
-//        }
-//        if (c == 0)
-//          return update(k, v, min)
-//        min += 1
-//      }
-//
-//      // search remaining keys
-//      val i = keySearch(k, min, max)
-//
-//      return if (i < 0) NotFound else update(k, v, i)
-//    }
-
-    def update(k: A, v: B, i: Int): AnyRef = {
+    def update(k: A, v: B, i: Int): B = {
       unshareKeys()
       val prev = value(i)
       keysAndValues(2 * i + 1) = v.asInstanceOf[AnyRef]
@@ -188,111 +189,106 @@ object TTree1 {
       }
     }
 
-    def insert(k: A, v: B, predAncestor: Node[A,B], succAncestor: Node[A,B])(implicit cmp: Ordering[A]): Node[A,B] = {
-      var min = 0
-      var max = numKeys - 1
-
-      // go right?
-      if (right != null) {
-        val c = cmp.compare(k, key(max))
-        if (c > 0) {
-          val n = right.unshare.insert(k, v, this, succAncestor)
-          if (n ne right) right = n // avoid M and E states for nodes near the root
-          return fixHeightAndRebalance()
-        }
-        assert(c != 0) // this is insert, not put
-        max -= 1
-      }
-
-      // go left?
-      if (left != null) {
-        val c = cmp.compare(k, key(min))
-        if (c < 0) {
-          val n = left.unshare.insert(k, v, predAncestor, this)
-          if (n ne left) left = n
-          return fixHeightAndRebalance()
-        }
-        assert(c != 0)
-        min += 1
-      }
-
-      // search remaining keys, failing if found
-      val i = -(keySearch(k, min, max) + 1)
-      assert(i > 0 || (i == 0 && left == null))
-      assert(i < numKeys || (i == numKeys && right == null))
-
-//      if (i == 0 && predAncestor != null && predAncestor.numKeys < MaxKeyCapacity / 2) {
-//        // it's better if the higher nodes are pretty full
-//        predAncestor.insert(k, v, predAncestor.numKeys)
-//        return this
-//      }
-//
-//      if (i == numKeys && succAncestor != null && succAncestor.numKeys < MaxKeyCapacity / 2) {
-//        // it's better if the higher nodes are pretty full
-//        succAncestor.insert(k, v, 0)
-//        return this
-//      }
-
-      return insert(k, v, i)
-    }
-
-    def insert(k: A, v: B, i: Int): Node[A,B] = {
+    def insert(k: A, v: B, i: Int): SearchResult = {
       if (i == MaxKeyCapacity) {
         // new right node needed
         assert(right == null)
         right = new Node(k, v)
-        return fixHeightAndRebalance()
+
+        return FixRequired
+      } else {
+        // this will push down the largest key if necessary, and clone if necessary
+        val z = prepareForInsert()
+
+        Array.copy(keysAndValues, 2 * i, keysAndValues, 2 * i + 2, 2 * (numKeys - i))
+        keysAndValues(2 * i) = k.asInstanceOf[AnyRef]
+        keysAndValues(2 * i + 1) = v.asInstanceOf[AnyRef]
+        numKeys += 1
+
+        z
       }
-
-      // TODO: clean up code
-
-      // this will push down the largest key if necessary, and clone if necessary
-      val fixLater = prepareForInsert()
-
-      Array.copy(keysAndValues, 2 * i, keysAndValues, 2 * i + 2, 2 * (numKeys - i))
-      keysAndValues(2 * i) = k.asInstanceOf[AnyRef]
-      keysAndValues(2 * i + 1) = v.asInstanceOf[AnyRef]
-      numKeys += 1
-
-      return if (fixLater) fixHeightAndRebalance() else this
     }
 
-    def prepareForInsert(): Boolean = {
+    def prepareForInsert(): SearchResult = {
       if (numKeys * 2 < keysAndValues.length) {
         // no resize or push-down needed
         unshareKeys()
-        false
+
+        NotFound
       } else if (numKeys < MaxKeyCapacity) {
         // resize is sufficient, unshare and resize at the same time
         val kv = new Array[AnyRef](nextCapacity(numKeys) * 2)
-        Array.copy(keysAndValues, 0, kv, 0, numKeys * 2)
+        System.arraycopy(keysAndValues, 0, kv, 0, numKeys * 2)
         keysAndValues = kv
         state = Unshared
 
         // no push-down, so no rebalancing needed later
-        false
+        NotFound
       } else {
         // this node is full, move its maximum entry to the right
         unshareKeys()
         val k = key(numKeys - 1)
-        val v = value(numKeys - 1).asInstanceOf[B]
-        right = if (right == null) new Node(k, v) else right.unshare.pushMin(k, v)
+        val v = value(numKeys - 1)
         numKeys -= 1
 
-        // caller must recompute height and check balance
-        true
+        if (right == null) {
+          right = new Node(k, v)
+
+          FixRequired
+        } else {
+          val z = unsharedRight.insertMin(k, v)
+
+          if (z eq FixRequired)
+            fixRight()
+          else
+            NotFound
+        }
       }
     }
 
-    def pushMin(k: A, v: B): Node[A,B] = {
+    def insertMin(k: A, v: B): SearchResult = {
       if (left == null && numKeys < MaxKeyCapacity) {
         // this is the left-most descendant of the right child of the pushing
         // node, and has space for us
-        return insert(k, v, 0)
+        val f = insert(k, v, 0)
+        assert(f eq NotFound)
+
+        NotFound
+      } else if (left == null) {
+        // new node
+        left = new Node(k, v)
+
+        FixRequired
       } else {
-        left = if (left == null) new Node(k, v) else left.unshare.pushMin(k, v)
-        return fixHeightAndRebalance()
+        val z = unsharedLeft.insertMin(k, v)
+
+        if (z eq FixRequired)
+          fixLeft()
+        else
+          NotFound
       }
+    }
+
+    def fixLeft(): SearchResult = {
+      val prevHeight = left.height
+      val newLeft = left.fixHeightAndRebalance()
+      if (newLeft ne left)
+        left = newLeft
+      if (prevHeight != newLeft.height)
+        FixRequired
+      else
+        NotFound
+    }
+
+    def fixRight(): SearchResult = {
+      val prevHeight = right.height
+      val newRight = right.fixHeightAndRebalance()
+      if (newRight ne right)
+        right = newRight
+      if (prevHeight != newRight.height)
+        FixRequired
+      else
+        NotFound
     }
 
     def fixHeightAndRebalance(): Node[A,B] = {
@@ -330,6 +326,22 @@ object TTree1 {
       nL.right = this
       this.height = 1 + math.max(height(left), height(right))
       nL.height = 1 + math.max(height(nL.left), this.height)
+
+      // TODO: optimize
+      if (nL.numKeys < MaxKeyCapacity) {
+        assert(this.left == null && this.numKeys == MaxKeyCapacity)
+        var i = 0
+        while (nL.numKeys < MaxKeyCapacity) {
+          nL.insert(key(i), value(i).asInstanceOf[B], nL.numKeys)
+          i += 1
+        }
+        unshareKeys()
+        Array.copy(keysAndValues, 2 * i, keysAndValues, 0, 2 * (MaxKeyCapacity - i))
+        for (j <- (2 * (numKeys - i)) until (2 * numKeys))
+          keysAndValues(j) = null
+        numKeys -= i
+      }
+
       nL
     }
 
@@ -344,6 +356,19 @@ object TTree1 {
       nR.left = this
       this.height = 1 + math.max(height(right), height(left))
       nR.height = 1 + math.max(height(nR.right), this.height)
+
+      // TODO: optimize
+      if (nR.numKeys < MaxKeyCapacity) {
+        assert(this.right == null && this.numKeys == MaxKeyCapacity)
+        unshareKeys()
+        while (nR.numKeys < MaxKeyCapacity) {
+          numKeys -= 1
+          nR.insert(key(numKeys), value(numKeys).asInstanceOf[B], 0)
+          keysAndValues(numKeys * 2) = null
+          keysAndValues(numKeys * 2 + 1) = null
+        }
+      }
+
       nR
     }
 
@@ -378,6 +403,7 @@ object TTree1 {
           assert(cmp.compare(key(numKeys - 1), right.minKey) < 0)
           right.validate
         }
+        assert((left == null && right == null) || numKeys == MaxKeyCapacity)
       }
     }
   }
@@ -475,7 +501,7 @@ object TTree1 {
         }
       }
       visit(_root)
-      for (i <- 0 until MaxKeyCapacity) {
+      for (i <- 0 to MaxKeyCapacity) {
         println(m(i) + " nodes with " + i + " keys")
       }
     }
@@ -489,76 +515,110 @@ object TTree1 {
     }
 
     def update(key: A, value: B) {
-      if (_root.update(key, value) eq NotFound) {
-        _root = _root.insert(key, value, null, null)
-        _size += 1
+      val z = _root.put(key, value)
+      z match {
+        case Left(x) => {}
+        case Right(FixRequired) => {
+          _root = _root.fixHeightAndRebalance()
+          _size += 1
+        }
+        case Right(NotFound) => {
+          _size += 1
+        }
       }
-      //validate
     }
 
     def put(key: A, value: B): Option[B] = {
-      val z = _root.update(key, value)
-      if (z eq NotFound) {
-        _root = _root.insert(key, value, null, null)
-        _size += 1
-        //validate
-        None
-      } else {
-        //validate
-        Some(z.asInstanceOf[B])
+      val z = _root.put(key, value)
+      z match {
+        case Left(x) => Some(x)
+        case Right(FixRequired) => {
+          _root = _root.fixHeightAndRebalance()
+          _size += 1
+          None
+        }
+        case Right(NotFound) => {
+          _size += 1
+          None
+        }
       }
     }
   }
 
   var cmpCount = 0
 
-  implicit val myOrder = new Ordering[Int] {
-    def compare(x: Int, y: Int): Int = {
-      cmpCount += 1
-      if (x < y) -1 else if (x == y) 0 else 1
+//  implicit val myOrder = new Ordering[Int] {
+//    def compare(x: Int, y: Int): Int = {
+//      cmpCount += 1
+//      if (x < y) -1 else if (x == y) 0 else 1
+//    }
+//  }
+
+  def main(args: Array[String]) {
+    val rand = new scala.util.Random(0)
+    for (pass <- 0 until 20) testInt(rand)
+    println("------------- adding short")
+    for (pass <- 0 until 10) {
+      testInt(rand)
+      testShort(rand)
+    }
+    println("------------- adding long")
+    for (pass <- 0 until 10) {
+      testInt(rand)
+      testShort(rand)
+      testLong(rand)
     }
   }
 
-  def main(args: Array[String]) {
-    val rand = new scala.util.Random
-    for (pass <- 0 until 50) test(rand)
+  def Range = 1<<30
+
+  def testInt(rand: scala.util.Random) = {
+    test[Int](rand, () => rand.nextInt(Range))
   }
 
-  def test(rand: scala.util.Random) {
+  def testShort(rand: scala.util.Random) = {
+    test[Short](rand, () => rand.nextInt(Range).asInstanceOf[Short])
+  }
+
+  def testLong(rand: scala.util.Random) = {
+    test[Long](rand, () => rand.nextInt(Range).asInstanceOf[Long])
+  }
+
+  def test[A](rand: scala.util.Random, keyGen: () => A)(implicit cmp: Ordering[A]) {
     cmpCount = 0
-    val a = testTTree(rand)
+    val a = testTTree(rand, keyGen)
     val ac = cmpCount
     cmpCount = 0
-    val b = testJavaTree(rand)
+    val b = testJavaTree(rand, keyGen)
     val bc = cmpCount
     println("TTree: " + a + " nanos/op,  java.util.TreeMap: " + b + " nanos/op")
-    println("  TTree: " + ac + " compares,  java.util.TreeMap: " + bc + " compares")
+//    println("  TTree: " + ac + " compares,  java.util.TreeMap: " + bc + " compares")
   }
 
-  def testTTree(rand: scala.util.Random): Int = {
+  def testTTree[A](rand: scala.util.Random, keyGen: () => A)(implicit cmp: Ordering[A]): Int = {
     val t0 = System.currentTimeMillis
-    val m = new MutableTree[Int,String]
+    val m = new MutableTree[A,String]
     var i = 1000000
     while (i > 0) {
-      val key = rand.nextInt(10000)
+      val key = keyGen()
       val pct = rand.nextInt(100)
       if (pct < 80) {
         m.contains(key)
       } else {
-        m(key) = "abc"        
+        m(key) = "abc"
       }
       i -= 1
     }
-    m.dumpBFs()
+    //m.dumpBFs()
     (System.currentTimeMillis - t0).intValue
   }
 
-  def testJavaTree(rand: scala.util.Random): Int = {
+  def testJavaTree[A](rand: scala.util.Random, keyGen: () => A)(implicit cmp: Ordering[A]): Int = {
     val t0 = System.currentTimeMillis
-    val m = new java.util.TreeMap[Int,String](implicitly[Ordering[Int]])
+    val m = new java.util.TreeMap[A,String](cmp)
     var i = 1000000
     while (i > 0) {
-      val key = rand.nextInt(10000)
+      val key = keyGen()
       val pct = rand.nextInt(100)
       if (pct < 80) {
         m.containsKey(key)
