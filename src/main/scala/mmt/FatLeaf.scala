@@ -9,7 +9,7 @@ private object FatLeafNotFound
 object FatLeaf {
   import mmt.{FatLeafNotFound => NotFound}
 
-  private def Capacity = 15
+  private def Capacity = 127
 
   private def initKV[A,B](k: A, v: B) = {
     val kv = new Array[AnyRef](2 * Capacity)
@@ -23,35 +23,26 @@ object FatLeaf {
                          var key: A, // unused in leaf nodes
                          var value: B, // unused in leaf nodes
                          var parent: Node[A,B],
-                         var _leftOrExtras: AnyRef,
-                         var right: Node[A,B]) {
+                         var left: Node[A,B],
+                         var right: Node[A,B],
+                         var extras: Array[AnyRef]) {
 
     def this(h: Int, k: A, v: B, p: Node[A,B], left0: Node[A,B], right0: Node[A,B]) =
-      this(h.asInstanceOf[Byte], 0: Byte, k, v, p, left0, right0)
+      this(h.asInstanceOf[Byte], 0: Byte, k, v, p, left0, right0, null)
 
-    def this(es: Int, p: Node[A,B], extras: Array[AnyRef]) =
-      this(1: Byte, es.asInstanceOf[Byte], null.asInstanceOf[A], null.asInstanceOf[B], p, extras, null)
+    def this(es: Int, p: Node[A,B], extras0: Array[AnyRef]) =
+      this(1: Byte, es.asInstanceOf[Byte], null.asInstanceOf[A], null.asInstanceOf[B], p, null, null, extras0)
 
     def this(es: Int, p: Node[A,B]) = this(es, p, new Array[AnyRef](2 * Capacity))
 
-    assert(height < 0 || parent != null)
 
-    
-    def height = _height: Int
+    def height: Int = _height
     def height_=(v: Int) { _height = v.asInstanceOf[Byte] }
 
-    def isLeaf = _extraSize != (0: Byte)
+    def isLeaf = left == null // _extraSize != (0: Byte)
 
-    def extraSize = _extraSize: Int
+    def extraSize: Int = _extraSize
     def extraSize_=(s: Int) { _extraSize = s.asInstanceOf[Byte] }
-
-    def left = {
-      assert(!isLeaf) // TODO: remove
-      _leftOrExtras.asInstanceOf[Node[A,B]]
-    }
-    def left_=(n: Node[A,B]) { _leftOrExtras = n }
-
-    def extras: Array[AnyRef] = _leftOrExtras.asInstanceOf[Array[AnyRef]]
 
     def keys(i: Int): A = extras(2 * i).asInstanceOf[A]
     def setKey(i: Int, k: A) { extras(2 * i) = k.asInstanceOf[AnyRef] }
@@ -152,12 +143,12 @@ object FatLeaf {
         this
       } else if (isLeaf) {
         // clone the keys and values array as well
-        new Node[A,B](1: Byte, _extraSize, key, value, p, extras.clone(), null)
+        new Node[A,B](1: Byte, _extraSize, key, value, p, null, null, extras.clone())
       } else {
         // push down the mark first
         left.markShared()
         right.markShared()
-        new Node[A,B](_height, 0: Byte, key, value, p, _leftOrExtras, right)
+        new Node[A,B](_height, 0: Byte, key, value, p, left, right, null)
       }
     }
 
@@ -214,7 +205,7 @@ object FatLeaf {
     }
 
     def splittingInsert(k: A, v: B, i: Int) {
-      assert(extraSize == Capacity && height == 1)
+      //assert(extraSize == Capacity && height == 1)
 
       // we've got Capacity + 1 entries to distribute.  1 goes in this.
       val leftSize = (Capacity + 1) / 2
@@ -373,7 +364,8 @@ object FatLeaf {
         // rootHolder
         assert(left == null && right != null)
       } else if (isLeaf) {
-        assert(extraSize > 0 && extraSize <= Capacity)
+        assert(extraSize > 0 || (extraSize == 0 && parent.height < 0))
+        assert(extraSize <= Capacity)
         assert(right == null)
       } else {
         assert(left != null && (left.parent eq this))
@@ -389,7 +381,11 @@ object FatLeaf {
 
   abstract class Tree[A,B](implicit cmp: Ordering[A]) {
 
-    protected val rootHolder = new Node[A,B](-1: Byte, 0: Byte, null.asInstanceOf[A], null.asInstanceOf[B], null, null, null)
+    protected val rootHolder = {
+      val h = new Node[A,B](-1: Byte, 0: Byte, null.asInstanceOf[A], null.asInstanceOf[B], null, null, null, null)
+      h.right = new Node[A,B](1: Byte, 0: Byte, null.asInstanceOf[A], null.asInstanceOf[B], h, null, null, new Array[AnyRef](2 * Capacity))
+      h
+    }
 
     protected def root = rootHolder.right
     protected var _size = 0
@@ -398,40 +394,34 @@ object FatLeaf {
     def size: Int = _size
 
     def contains(key: A): Boolean = {
-      if (root == null) {
-        false
-      } else {
-        val n = root.nodeForGet(key)
-        !n.isLeaf || n.keySearch(key) >= 0
-      }
+      val n = root.nodeForGet(key)
+      !n.isLeaf || n.keySearch(key) >= 0
     }
 
     def get(key: A): Option[B] = {
-      if (root != null) {
-        val n = root.nodeForGet(key)
-        if (!n.isLeaf) {
-          return Some(n.value)
-        } else {
-          val i = n.keySearch(key)
-          if (i >= 0)
-            return Some(n.values(i))
-        }
+      val n = root.nodeForGet(key)
+      if (!n.isLeaf) {
+        Some(n.value)
+      } else {
+        val i = n.keySearch(key)
+        if (i >= 0)
+          Some(n.values(i))
+        else
+          None
       }
-      return None
     }
 
     def apply(key: A): B = {
-      if (root != null) {
-        val n = root.nodeForGet(key)
-        if (n.extraSize == 0) {
-          return n.value
-        } else {
-          val i = n.keySearch(key)
-          if (i >= 0)
-            return n.values(i)
-        }
+      val n = root.nodeForGet(key)
+      if (n.extraSize == 0) {
+        n.value
+      } else {
+        val i = n.keySearch(key)
+        if (i >= 0)
+          n.values(i)
+        else
+          default(key)
       }
-      return default(key)
     }
 
     def default(key: A): B = throw new IllegalArgumentException
@@ -439,7 +429,7 @@ object FatLeaf {
     def elements: Iterator[(A,B)] = new Iterator[(A,B)] {
       // TODO: rewrite using a stack to support iteration without unsharing
       
-      private var current: Node[A,B] = if (root == null) null else root.unsharedLeftmost()
+      private var current: Node[A,B] = if (root.isLeaf && root.extraSize == 0) null else root.unsharedLeftmost()
       private var index = 0
 
       def hasNext = (current != null)
@@ -466,7 +456,7 @@ object FatLeaf {
 
     def validate() {
       if (_size == 0) {
-        assert(root == null)
+        assert(root.isLeaf && root.extraSize == 0)
       } else {
         assert(_size == root.computeSize)
         root.validate()
@@ -495,18 +485,10 @@ object FatLeaf {
     }
 
     private def putImpl(key: A, value: B): AnyRef = {
-      if (root == null) {
-        rootHolder.right = new Node(1, rootHolder)
-        root.setKey(0, key)
-        root.setValue(0, value)
+      val z = root.put(key, value)
+      if (z eq NotFound)
         _size += 1
-        NotFound
-      } else {
-        val z = root.put(key, value)
-        if (z eq NotFound)
-          _size += 1
-        z
-      }
+      z
     }
   }
 
@@ -535,8 +517,8 @@ object FatLeaf {
     }
   }
 
-  def Range = 1<<21
-  def GetPct = 0
+  def Range = 10000 // <<21
+  def GetPct = 95
 
   def testInt(rand: scala.util.Random) = {
     test[Int]("Int", rand, () => rand.nextInt(Range))
@@ -567,16 +549,18 @@ object FatLeaf {
     for (group <- 1 until 10000) {
       var i = 1000
       val t0 = System.nanoTime
+      var matching = 0
       while (i > 0) {
         val key = keyGen()
         val pct = rand.nextInt(100)
         if (pct < GetPct) {
-          m.contains(key)
+          if (m.contains(key)) matching += 1
         } else {
           m(key) = "abc"
         }
         i -= 1
       }
+      if (matching < 0) println("unlikely")
       val elapsed = System.nanoTime - t0
       best = best min elapsed
     }
@@ -589,16 +573,18 @@ object FatLeaf {
     for (group <- 1 until 10000) {
       var i = 1000
       val t0 = System.nanoTime
+      var matching = 0
       while (i > 0) {
         val key = keyGen()
         val pct = rand.nextInt(100)
         if (pct < GetPct) {
-          m.containsKey(key)
+          if (m.containsKey(key)) matching += 1
         } else {
           m.put(key, "abc")
         }
         i -= 1
       }
+      if (matching < 0) println("unlikely")
       val elapsed = System.nanoTime - t0
       best = best min elapsed
     }
