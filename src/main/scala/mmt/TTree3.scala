@@ -2,31 +2,41 @@ package mmt
 
 import annotation.tailrec
 
-// TTree2
+// TTree3
 
-object TTree2 {
+object TTree3 {
   private def Unshared = 0 : Byte
-  private def SharedKeys = 1 : Byte
-  private def SharedAll = 2 : Byte
+  private def SharedK = 1 : Byte
+  private def SharedKV = 2 : Byte
+  private def SharedKVN = 3 : Byte
 
   private def Capacity = 15
 
-  private def initKV[A,B](k: A, v: B) = {
-    val kv = new Array[AnyRef](2 * Capacity)
-    kv(0) = k.asInstanceOf[AnyRef]
-    kv(1) = v.asInstanceOf[AnyRef]
-    kv
+  private def initK[@specialized(Int) A](proto: Node[A,_], k: A): Array[A] = {
+    // TODO: avoid pinning in the leftover space
+    val a = proto.keys.clone()
+    a(0) = k
+    a
   }
 
-  final class Node[A,B](var state: Byte,
-                        height0: Int,
-                        numKeys0: Int,
-                        var parent: Node[A,B],
-                        var left: Node[A,B],
-                        var right: Node[A,B],
-                        var keysAndValues: Array[AnyRef]) {
+  private def initV[B](proto: Node[_,B], v: B): Array[B] = {
+    // TODO: avoid pinning in the leftover space
+    val a = proto.values.clone()
+    a(0) = v
+    a
+  }
 
-    def this(p: Node[A,B], k: A, v: B) = this(Unshared, 1, 1, p, null, null, initKV(k, v))
+  final class Node[@specialized(Int) A,B](
+          var state: Byte,
+          height0: Int,
+          numKeys0: Int,
+          var parent: Node[A, B],
+          var left: Node[A,B],
+          var right: Node[A, B],
+          var keys: Array[A],
+          var values: Array[B]) {
+
+    def this(p: Node[A,B], k: A, v: B) = this(Unshared, 1, 1, p, null, null, initK(p, k), initV(p, v))
 
     //def state = Unshared
     //def state_=(s: Byte) {}
@@ -39,13 +49,10 @@ object TTree2 {
     def numKeys = _numKeys : Int
     def numKeys_=(v: Int) { _numKeys = v.asInstanceOf[Short] }
 
-    def key(i: Int) = keysAndValues(2 * i).asInstanceOf[A]
-    def value(i: Int) = keysAndValues(2 * i + 1).asInstanceOf[B]
-
     @tailrec def nodeForGet(k: A)(implicit cmp: Ordering[A]): Node[A,B] = {
-      if (right != null && cmp.compare(k, key(numKeys - 1)) > 0) {
+      if (right != null && cmp.compare(k, keys(numKeys - 1)) > 0) {
         right.nodeForGet(k)
-      } else if (left != null && cmp.compare(k, key(0)) < 0) {
+      } else if (left != null && cmp.compare(k, keys(0)) < 0) {
         left.nodeForGet(k)
       } else {
         this
@@ -61,7 +68,7 @@ object TTree2 {
         -(min + 1)
       } else {
         val mid = (min + max) >>> 1
-        val c = cmp.compare(k, key(mid))
+        val c = cmp.compare(k, keys(mid))
         if (c < 0)
           keySearch(k, min, mid - 1)
         else if (c > 0)
@@ -72,19 +79,19 @@ object TTree2 {
     }
 
     def unsharedLeft(): Node[A,B] = {
-      if (left != null && left.state == SharedAll)
+      if (left != null && left.state == SharedKVN)
         left = left.unshare(this)
       left
     }
 
     def unsharedRight(): Node[A,B] = {
-      if (right != null && right.state == SharedAll)
+      if (right != null && right.state == SharedKVN)
         right = right.unshare(this)
       right
     }
 
     def unshare(p: Node[A,B]): Node[A,B] = {
-      if (state != SharedAll)
+      if (state != SharedKVN)
         this
       else {
         // push down the mark
@@ -93,22 +100,22 @@ object TTree2 {
         if (right != null)
           right.markShared()
 
-        // leave keysAndValues shared for now
-        return new Node[A,B](SharedKeys, height, numKeys, p, left, right, keysAndValues)
+        // leave keys and values shared for now
+        return new Node[A,B](SharedKV, height, numKeys, p, left, right, keys, values)
       }
     }
 
     def markShared() {
-      if (state != SharedAll) {
-        state = SharedAll
+      if (state != SharedKVN) {
+        state = SharedKVN
         parent = null
       }
     }
 
     @tailrec def nodeForPut(k: A)(implicit cmp: Ordering[A]): Node[A,B] = {
-      if (right != null && cmp.compare(k, key(numKeys - 1)) > 0) {
+      if (right != null && cmp.compare(k, keys(numKeys - 1)) > 0) {
         unsharedRight().nodeForPut(k)
-      } else if (left != null && cmp.compare(k, key(0)) < 0) {
+      } else if (left != null && cmp.compare(k, keys(0)) < 0) {
         unsharedLeft().nodeForPut(k)
       } else {
         this
@@ -137,18 +144,25 @@ object TTree2 {
     }
 
     def update(k: A, v: B, i: Int): B = {
-      unshareKV()
-      val z = value(i)
-      keysAndValues(2 * i + 1) = v.asInstanceOf[AnyRef]
+      unshareV()
+      val z = values(i)
+      values(i) = v
       z
     }
 
+    def unshareV() {
+      // on entry, state is not SharedKVN
+      if (state == SharedKV) {
+        values = values.clone()
+        state = SharedK
+      }
+    }
+
     def unshareKV() {
-      if (state == SharedKeys) {
-        //val kv = new Array[AnyRef](2 * Capacity)
-        //System.arraycopy(keysAndValues, 0, kv, 0, 2 * Capacity)
-        //keysAndValues = kv
-        keysAndValues = keysAndValues.clone()
+      // on entry, state is not SharedKVN
+      if (state == SharedK || state == SharedKV) {
+        keys = keys.clone()
+        values = values.clone()
         state = Unshared
       }
     }
@@ -163,8 +177,8 @@ object TTree2 {
         // this will push down the largest key if necessary
         unshareKV()
         if (numKeys == Capacity) {
-          val k0 = key(Capacity - 1)
-          val v0 = value(Capacity - 1)
+          val k0 = keys(Capacity - 1)
+          val v0 = values(Capacity - 1)
           numKeys = Capacity - 1
 
           insertHere(k, v, i)
@@ -182,9 +196,10 @@ object TTree2 {
     }
 
     def insertHere(k: A, v: B, i: Int) {
-      System.arraycopy(keysAndValues, 2 * i, keysAndValues, 2 * i + 2, 2 * (numKeys - i))
-      keysAndValues(2 * i) = k.asInstanceOf[AnyRef]
-      keysAndValues(2 * i + 1) = v.asInstanceOf[AnyRef]
+      System.arraycopy(keys, i, keys, i + 1, numKeys - i)
+      System.arraycopy(values, i, values, i + 1, numKeys - i)
+      keys(i) = k
+      values(i) = v
       numKeys += 1
     }
 
@@ -262,14 +277,17 @@ object TTree2 {
 
         nL.unshareKV()
         val n = Capacity - nL.numKeys
-        System.arraycopy(keysAndValues, 0, nL.keysAndValues, 2 * nL.numKeys, 2 * n)
+        System.arraycopy(keys, 0, nL.keys, nL.numKeys, n)
+        System.arraycopy(values, 0, nL.values, nL.numKeys, n)
         nL.numKeys = Capacity
 
         unshareKV()
-        System.arraycopy(keysAndValues, 2 * n, keysAndValues, 0, 2 * (Capacity - n))
-        var i = 2 * (Capacity - n)
-        while (i < 2 * Capacity) {
-          keysAndValues(i) = null
+        System.arraycopy(keys, n, keys, 0, Capacity - n)
+        System.arraycopy(values, n, values, 0, Capacity - n)
+        var i = Capacity - n
+        while (i < Capacity) {
+          keys(i) = null.asInstanceOf[A]
+          values(i) = null.asInstanceOf[B]
           i += 1
         }
         numKeys = Capacity - n
@@ -303,14 +321,17 @@ object TTree2 {
 
         nR.unshareKV()
         val n = Capacity - nR.numKeys
-        System.arraycopy(nR.keysAndValues, 0, nR.keysAndValues, 2 * n, 2 * (Capacity - n))
-        System.arraycopy(keysAndValues, 2 * (Capacity - n), nR.keysAndValues, 0, 2 * n)
+        System.arraycopy(nR.keys, 0, nR.keys, n, Capacity - n)
+        System.arraycopy(nR.values, 0, nR.values, n, Capacity - n)
+        System.arraycopy(keys, Capacity - n, nR.keys, 0, n)
+        System.arraycopy(values, Capacity - n, nR.values, 0, n)
         nR.numKeys = Capacity
 
         unshareKV()
-        var i = 2 * (Capacity - n)
-        while (i < 2 * Capacity) {
-          keysAndValues(i) = null
+        var i = Capacity - n
+        while (i < Capacity) {
+          keys(i) = null.asInstanceOf[A]
+          values(i) = null.asInstanceOf[B]
           i += 1
         }
         numKeys = Capacity - n
@@ -324,9 +345,9 @@ object TTree2 {
       rotateLeft()
     }
 
-    @tailrec def minKey: A = if (left != null) left.minKey else key(0)
+    @tailrec def minKey: A = if (left != null) left.minKey else keys(0)
 
-    @tailrec def maxKey: A = if (right != null) right.maxKey else key(numKeys - 1)
+    @tailrec def maxKey: A = if (right != null) right.maxKey else keys(numKeys - 1)
 
     def computeSize: Int = {
       numKeys + (if (left != null) left.computeSize else 0) + (if (right != null) right.computeSize else 0)
@@ -340,14 +361,13 @@ object TTree2 {
         assert(height == 1 + math.max(height(left), height(right)))
         assert(math.abs(height(left) - height(right)) <= 1)
         assert(numKeys > 0 && numKeys <= Capacity)
-        for (i <- 0 until numKeys - 1) assert(cmp.compare(key(i), key(i + 1)) < 0)
-        for (i <- numKeys until keysAndValues.length / 2) assert(key(i) == null)
+        for (i <- 0 until numKeys - 1) assert(cmp.compare(keys(i), keys(i + 1)) < 0)
         if (left != null) {
-          assert(cmp.compare(left.maxKey, key(0)) < 0)
+          assert(cmp.compare(left.maxKey, keys(0)) < 0)
           left.validate()
         }
         if (right != null) {
-          assert(cmp.compare(key(numKeys - 1), right.minKey) < 0)
+          assert(cmp.compare(keys(numKeys - 1), right.minKey) < 0)
           right.validate()
         }
         assert((left == null && right == null) || numKeys == Capacity)
@@ -355,11 +375,14 @@ object TTree2 {
     }
   }
 
-  abstract class Tree[A,B](implicit cmp: Ordering[A]) {
+  trait Tree[@specialized(Int) A,B] {
+    implicit def cmp: Ordering[A]
+    implicit def am: ClassManifest[A]
+    implicit def bm: ClassManifest[B]
 
     private val rootHolder = {
-      val h = new Node[A,B](Unshared, -1, 0, null, null, null, null)
-      h.right = new Node[A,B](Unshared, 1, 0, h, null, null, new Array[AnyRef](2 * Capacity))
+      val h = new Node[A,B](Unshared, -1, 0, null, null, null, null, null)
+      h.right = new Node[A,B](Unshared, 1, 0, h, null, null, new Array[A](Capacity), new Array[B](Capacity))
       h
     }
 
@@ -376,13 +399,13 @@ object TTree2 {
     def get(key: A): Option[B] = {
       val n = root.nodeForGet(key)
       val i = n.keySearch(key)
-      if (i < 0) None else Some(n.value(i))
+      if (i < 0) None else Some(n.values(i))
     }
 
     def apply(key: A): B = {
       val n = root.nodeForGet(key)
       val i = n.keySearch(key)
-      if (i < 0) default(key) else n.value(i)
+      if (i < 0) default(key) else n.values(i)
     }
 
     def default(key: A): B = throw new IllegalArgumentException
@@ -421,7 +444,7 @@ object TTree2 {
         }
         if (depth > 0) {
           val n = stack(depth - 1)
-          avail = (n.key(index), n.value(index).asInstanceOf[B])
+          avail = (n.keys(index), n.values(index))
         } else {
           avail = null
         }
@@ -464,7 +487,7 @@ object TTree2 {
     }
   }
 
-  class MutableTree[A,B](implicit cmp: Ordering[A]) extends Tree[A,B] {
+  class MutableTree[@specialized(Int) A,B](implicit var cmp: Ordering[A], var am: ClassManifest[A], var bm: ClassManifest[B]) extends Tree[A,B] {
     def update(key: A, value: B) {
       if (root.nodeForPut(key).storeHere(key, value))
         _size += 1
@@ -487,7 +510,7 @@ object TTree2 {
 //    }
 //  }
 
-  def main0(args: Array[String]) {
+  def main(args: Array[String]) {
     val rand = new scala.util.Random(0)
     for (pass <- 0 until 0) testInt(rand)
     println("------------- adding short")
@@ -518,18 +541,18 @@ object TTree2 {
     test[Long]("Long", rand, () => rand.nextInt(Range).asInstanceOf[Long])
   }
 
-  def test[A](name: String, rand: scala.util.Random, keyGen: () => A)(implicit cmp: Ordering[A]) {
+  def test[A](name: String, rand: scala.util.Random, keyGen: () => A)(implicit cmp: Ordering[A], am: ClassManifest[A]) {
     cmpCount = 0
     val a = testTTree(rand, keyGen)
     val ac = cmpCount
     cmpCount = 0
     val b = testJavaTree(rand, keyGen)
     val bc = cmpCount
-    println(name + ": TTree2: " + a + " nanos/op,  java.util.TreeMap: " + b + " nanos/op")
-    if (ac > 0) println("  TTree2: " + ac + " compares,  java.util.TreeMap: " + bc + " compares")
+    println(name + ": TTree3: " + a + " nanos/op,  java.util.TreeMap: " + b + " nanos/op")
+    if (ac > 0) println("  TTree3: " + ac + " compares,  java.util.TreeMap: " + bc + " compares")
   }
 
-  def testTTree[A](rand: scala.util.Random, keyGen: () => A)(implicit cmp: Ordering[A]): Int = {
+  def testTTree[A](rand: scala.util.Random, keyGen: () => A)(implicit cmp: Ordering[A], am: ClassManifest[A]): Int = {
     val m = new MutableTree[A,String]
     var best = Long.MaxValue
     for (group <- 1 until 10000) {
@@ -551,7 +574,7 @@ object TTree2 {
     (best / 1000).asInstanceOf[Int]
   }
 
-  def testJavaTree[A](rand: scala.util.Random, keyGen: () => A)(implicit cmp: Ordering[A]): Int = {
+  def testJavaTree[A](rand: scala.util.Random, keyGen: () => A)(implicit cmp: Ordering[A], am: ClassManifest[A]): Int = {
     val m = new java.util.TreeMap[A,String](cmp)
     var best = Long.MaxValue
     for (group <- 1 until 10000) {
