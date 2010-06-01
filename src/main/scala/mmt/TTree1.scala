@@ -205,6 +205,13 @@ object TTree1 {
       }
     }
 
+    def resize(newCap: Int) {
+      val kv = new Array[AnyRef](newCap * 2)
+      System.arraycopy(keysAndValues, 0, kv, 0, numKeys * 2)
+      keysAndValues = kv
+      state = Unshared      
+    }
+
     def prepareForInsert(): SearchResult = {
       if (numKeys * 2 < keysAndValues.length) {
         // no resize or push-down needed
@@ -213,10 +220,7 @@ object TTree1 {
         NotFound
       } else if (numKeys < MaxKeyCapacity) {
         // resize is sufficient, unshare and resize at the same time
-        val kv = new Array[AnyRef](nextCapacity(numKeys) * 2)
-        System.arraycopy(keysAndValues, 0, kv, 0, numKeys * 2)
-        keysAndValues = kv
-        state = Unshared
+        resize(nextCapacity(numKeys))
 
         // no push-down, so no rebalancing needed later
         NotFound
@@ -323,19 +327,25 @@ object TTree1 {
       this.height = 1 + math.max(height(left), height(right))
       nL.height = 1 + math.max(height(nL.left), this.height)
 
-      // TODO: optimize
+      // TODO: fix this conditional to handle removes
       if (nL.numKeys < MaxKeyCapacity) {
         assert(this.left == null && this.numKeys == MaxKeyCapacity)
-        var i = 0
-        while (nL.numKeys < MaxKeyCapacity) {
-          nL.insert(key(i), value(i).asInstanceOf[B], nL.numKeys)
+
+        if (nL.state != Unshared || nL.keysAndValues.length != MaxKeyCapacity * 2) {
+          nL.resize(MaxKeyCapacity)
+        }
+        val n = MaxKeyCapacity - nL.numKeys
+        System.arraycopy(keysAndValues, 0, nL.keysAndValues, 2 * nL.numKeys, 2 * n)
+        nL.numKeys = MaxKeyCapacity
+
+        unshareKeys()
+        System.arraycopy(keysAndValues, 2 * n, keysAndValues, 0, 2 * (MaxKeyCapacity - n))
+        var i = 2 * (MaxKeyCapacity - n)
+        while (i < 2 * MaxKeyCapacity) {
+          keysAndValues(i) = null
           i += 1
         }
-        unshareKeys()
-        Array.copy(keysAndValues, 2 * i, keysAndValues, 0, 2 * (MaxKeyCapacity - i))
-        for (j <- (2 * (numKeys - i)) until (2 * numKeys))
-          keysAndValues(j) = null
-        numKeys -= i
+        numKeys = MaxKeyCapacity - n
       }
 
       nL
@@ -353,16 +363,25 @@ object TTree1 {
       this.height = 1 + math.max(height(right), height(left))
       nR.height = 1 + math.max(height(nR.right), this.height)
 
-      // TODO: optimize
+      // TODO: fix this conditional
       if (nR.numKeys < MaxKeyCapacity) {
         assert(this.right == null && this.numKeys == MaxKeyCapacity)
-        unshareKeys()
-        while (nR.numKeys < MaxKeyCapacity) {
-          numKeys -= 1
-          nR.insert(key(numKeys), value(numKeys).asInstanceOf[B], 0)
-          keysAndValues(numKeys * 2) = null
-          keysAndValues(numKeys * 2 + 1) = null
+
+        if (nR.state != Unshared || nR.keysAndValues.length != MaxKeyCapacity * 2) {
+          nR.resize(MaxKeyCapacity)
         }
+        val n = MaxKeyCapacity - nR.numKeys
+        System.arraycopy(nR.keysAndValues, 0, nR.keysAndValues, 2 * n, 2 * (MaxKeyCapacity - n))
+        System.arraycopy(keysAndValues, 2 * (MaxKeyCapacity - n), nR.keysAndValues, 0, 2 * n)
+        nR.numKeys = MaxKeyCapacity
+
+        unshareKeys()
+        var i = 2 * (MaxKeyCapacity - n)
+        while (i < 2 * MaxKeyCapacity) {
+          keysAndValues(i) = null
+          i += 1
+        }
+        numKeys = MaxKeyCapacity - n
       }
 
       nR
@@ -381,7 +400,7 @@ object TTree1 {
       numKeys + (if (left != null) left.computeSize else 0) + (if (right != null) right.computeSize else 0)
     }
 
-    def validate(implicit cmp: Ordering[A]) {
+    def validate()(implicit cmp: Ordering[A]) {
       if (numKeys == 0) {
         // special case for root
         assert(height == 1 && left == null && right == null)
@@ -393,11 +412,11 @@ object TTree1 {
         for (i <- numKeys until keysAndValues.length / 2) assert(key(i) == null)
         if (left != null) {
           assert(cmp.compare(left.maxKey, key(0)) < 0)
-          left.validate
+          left.validate()
         }
         if (right != null) {
           assert(cmp.compare(key(numKeys - 1), right.minKey) < 0)
-          right.validate
+          right.validate()
         }
         assert((left == null && right == null) || numKeys == MaxKeyCapacity)
       }
@@ -476,7 +495,7 @@ object TTree1 {
       }
     }
 
-    def validate {
+    def validate() {
       assert(_size == _root.computeSize)
       if (_size >= 2) {
         for (entries <- elements.toSeq.sliding(2)) {
@@ -484,7 +503,7 @@ object TTree1 {
         }
       }
       assert(_size == elements.toSeq.size)
-      _root.validate
+      _root.validate()
     }
 
     def dumpBFs() {
