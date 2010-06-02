@@ -9,7 +9,7 @@ private object FatLeafNotFound
 object FatLeaf {
   import mmt.{FatLeafNotFound => NotFound}
 
-  private def Capacity = 127
+  private def Capacity = 15
 
   private def initKV[A,B](k: A, v: B) = {
     val kv = new Array[AnyRef](2 * Capacity)
@@ -41,7 +41,7 @@ object FatLeaf {
 
     def isLeaf = left == null // _extraSize != (0: Byte)
 
-    def extraSize: Int = _extraSize
+    def extraSize: Int = _extraSize & 255
     def extraSize_=(s: Int) { _extraSize = s.asInstanceOf[Byte] }
 
     def keys(i: Int): A = extras(2 * i).asInstanceOf[A]
@@ -159,18 +159,29 @@ object FatLeaf {
 
     //////// writes
 
-    @tailrec def put(k: A, v: B)(implicit cmp: Ordering[A]): AnyRef = {
+    def put(k: A, v: B)(implicit cmp: Ordering[A]): AnyRef = {
+      nodeForPut(k).putHere(k, v)
+    }
+
+    @tailrec def nodeForPut(k: A)(implicit cmp: Ordering[A]): Node[A,B] = {
       if (isLeaf) {
-        leafPut(k, v)
+        this
       } else {
         val c = cmp.compare(k, key)
         if (c < 0)
-          unsharedLeft().put(k, v)
+          unsharedLeft().nodeForPut(k)
         else if (c > 0)
-          unsharedRight().put(k, v)
+          unsharedRight().nodeForPut(k)
         else
-          internalUpdate(v)
+          this
       }
+    }
+
+    def putHere(k: A, v: B)(implicit cmp: Ordering[A]): AnyRef = {
+      if (isLeaf)
+        leafPut(k, v)
+      else
+        internalUpdate(v)
     }
 
     def internalUpdate(v: B): AnyRef = {
@@ -262,10 +273,12 @@ object FatLeaf {
       right = newRight
 
       // we've grown, so we might need to rebalance the parent
-      parent.fix()
+      parent.fixHeightAndRebalance()
     }
 
-    def fix() {
+    //////// rebalancing
+
+    def fixHeightAndRebalance() {
       val h0 = height
 
       // rootHolder
@@ -286,7 +299,7 @@ object FatLeaf {
         val h = 1 + math.max(hL, hR)
         if (h != height) {
           height = h
-          parent.fix()
+          parent.fixHeightAndRebalance()
         }
       }
     }
@@ -298,7 +311,7 @@ object FatLeaf {
         repl.parent.left = repl
       }
       if (repl.height != oldHeight) {
-        repl.parent.fix()
+        repl.parent.fixHeightAndRebalance()
       }
     }
 
@@ -517,8 +530,8 @@ object FatLeaf {
     }
   }
 
-  def Range = 10000 // <<21
-  def GetPct = 95
+  def Range = 250 // 1<<21
+  def GetPct = 50
 
   def testInt(rand: scala.util.Random) = {
     test[Int]("Int", rand, () => rand.nextInt(Range))
@@ -537,6 +550,7 @@ object FatLeaf {
     val a = testTTree(rand, keyGen)
     val ac = cmpCount
     cmpCount = 0
+    //println()
     val b = testJavaTree(rand, keyGen)
     val bc = cmpCount
     println(name + ": FatLeaf: " + a + " nanos/op,  java.util.TreeMap: " + b + " nanos/op")
@@ -544,9 +558,10 @@ object FatLeaf {
   }
 
   def testTTree[A](rand: scala.util.Random, keyGen: () => A)(implicit cmp: Ordering[A]): Int = {
-    val m = new MutableTree[A,String]
+    //val m = new MutableTree[A,String]
     var best = Long.MaxValue
     for (group <- 1 until 10000) {
+      val m = new MutableTree[A,String]
       var i = 1000
       val t0 = System.nanoTime
       var matching = 0
@@ -568,9 +583,10 @@ object FatLeaf {
   }
 
   def testJavaTree[A](rand: scala.util.Random, keyGen: () => A)(implicit cmp: Ordering[A]): Int = {
-    val m = new java.util.TreeMap[A,String](cmp)
+    //val m = new java.util.TreeMap[A,String](cmp)
     var best = Long.MaxValue
     for (group <- 1 until 10000) {
+      val m = new java.util.TreeMap[A,String](cmp)
       var i = 1000
       val t0 = System.nanoTime
       var matching = 0
