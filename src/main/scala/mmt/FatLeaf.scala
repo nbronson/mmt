@@ -90,6 +90,20 @@ object FatLeaf {
       }
     }
 
+    def foreach(block: ((A,B)) => Unit) {
+      if (isLeaf) {
+        var i = 0
+        while (i < extraSize) {
+          block((keys(i), values(i)))
+          i += 1
+        }
+      } else {
+        left.foreach(block)
+        block((key, value))
+        right.foreach(block)
+      }
+    }
+
     //////// navigation on MUTABLE trees
 
     @tailrec def unsharedLeftmost(): Node[A,B] = {
@@ -579,16 +593,22 @@ object FatLeaf {
     }
   }
 
-  abstract class Tree[A,B](implicit cmp: Ordering[A]) {
+  private def emptyRootHolder[A,B]: Node[A,B] = {
+    val h = new Node(-1: Byte, 0: Byte, null.asInstanceOf[A], null.asInstanceOf[B], null, null, null, null)
+    h.right = new Node(1: Byte, 0: Byte, null.asInstanceOf[A], null.asInstanceOf[B], h, null, null, new Array[AnyRef](2 * Capacity))
+    h
+  }
 
-    protected val rootHolder = {
-      val h = new Node[A,B](-1: Byte, 0: Byte, null.asInstanceOf[A], null.asInstanceOf[B], null, null, null, null)
-      h.right = new Node[A,B](1: Byte, 0: Byte, null.asInstanceOf[A], null.asInstanceOf[B], h, null, null, new Array[AnyRef](2 * Capacity))
-      h
-    }
+  // confusingly, this is a rootHolder of a shared root, not a shared rootHolder
+  private def sharedRootHolder[A,B](root: Node[A,B]): Node[A,B] = {
+    root.markShared()
+    new Node(-1: Byte, 0: Byte, null.asInstanceOf[A], null.asInstanceOf[B], null, null, root, null)
+  }
 
-    protected def root = rootHolder.right
-    protected var _size = 0
+  abstract class Tree[A,B](protected var rootHolder: Node[A,B],
+                           protected var _size: Int)(implicit cmp: Ordering[A]) {
+
+    private[FatLeaf] def root = rootHolder.right
 
     def isEmpty: Boolean = (_size == 0)
     def size: Int = _size
@@ -626,31 +646,54 @@ object FatLeaf {
 
     def default(key: A): B = throw new IllegalArgumentException
 
+    def foreach(block: ((A,B)) => Unit) {
+      root.foreach(block)
+    }
+
     def elements: Iterator[(A,B)] = new Iterator[(A,B)] {
-      // TODO: rewrite using a stack to support iteration without unsharing
-      
-      private var current: Node[A,B] = if (root.isLeaf && root.extraSize == 0) null else root.unsharedLeftmost()
+      private val stack = new Array[Node[A,B]](root.height)
+      private var depth = 0
       private var index = 0
 
-      def hasNext = (current != null)
-      
-      def next = {
-        if (current == null)
-          throw new IllegalStateException
-        if (current.height == 1) {
-          val z = (current.keys(index), current.values(index))
-          if (index + 1 >= current.extraSize) {
-            index = 0
-            current = current.unsharedSucc()
-          } else {
-            index += 1
-          }
-          z
-        } else {
-          val z = (current.key, current.value)
-          current = current.unsharedSucc()
-          z
+      if (!(root.isLeaf && root.extraSize == 0)) pushMin(root)
+
+      @tailrec private def pushMin(node: Node[A,B]) {
+        if (node != null) {
+          stack(depth) = node
+          depth += 1
+          pushMin(node.left)
         }
+      }
+
+      private def advance() {
+        if (depth > 0) {
+          val node = stack(depth - 1)
+          if (node.isLeaf) {
+            if (index + 1 < node.extraSize) {
+              // more entries in this node
+              index += 1
+            } else {
+              index = 0
+              // right == null, so just pop
+              depth -= 1
+              stack(depth) = null
+            }
+          } else {
+            // pop current node
+            depth -= 1
+            pushMin(node.right)
+          }
+        }
+      }
+
+      def hasNext = depth > 0
+
+      def next = {
+        if (depth == 0) throw new IllegalStateException
+        val n = stack(depth - 1)
+        val z = ((if (n.isLeaf) n.keys(index) else n.key), (if (n.isLeaf) n.values(index) else n.value))
+        advance()
+        z
       }
     }
 
@@ -672,7 +715,34 @@ object FatLeaf {
     }
   }
 
-  class MutableTree[A,B](implicit cmp: Ordering[A]) extends Tree[A,B] {
+  class ImmutableTree[A,B] private (rh0: Node[A,B], size0: Int)(implicit cmp: Ordering[A]) extends Tree[A,B](rh0, size0) {
+
+    def this()(implicit cmp: Ordering[A]) = this(emptyRootHolder, 0)
+    def this(t: Tree[A,B])(implicit cmp: Ordering[A]) = this(sharedRootHolder(t.root), t.size)
+
+    override def clone: ImmutableTree[A,B] = this
+    def mutableClone: MutableTree[A,B] = new MutableTree(this)
+
+    def +(kv: (A,B)): ImmutableTree[A,B] = {
+      val newRH = sharedRootHolder(root)
+      val sizeDelta = if (newRH.nodeForWrite(kv._1).putHere(kv._1, kv._2) eq NotFound) 1 else 0
+      new ImmutableTree(newRH, size + sizeDelta)
+    }
+
+    def -(k: A): ImmutableTree[A,B] = {
+      val newRH = sharedRootHolder(root)
+      val sizeDelta = if (newRH.nodeForWrite(k).removeHere(k) eq NotFound) 0 else -1
+      new ImmutableTree(newRH, size + sizeDelta)
+    }
+  }
+
+  class MutableTree[A,B] private (rh0: Node[A,B], size0: Int)(implicit cmp: Ordering[A]) extends Tree[A,B](rh0, size0) {
+
+    def this()(implicit cmp: Ordering[A]) = this(emptyRootHolder, 0)
+    def this(t: Tree[A,B])(implicit cmp: Ordering[A]) = this(sharedRootHolder(t.root), t.size)
+
+    override def clone: MutableTree[A,B] = new MutableTree(this)
+    def immutableClone: ImmutableTree[A,B] = new ImmutableTree(this)
 
     def update(key: A, value: B) {
       putImpl(key, value)
@@ -720,23 +790,23 @@ object FatLeaf {
 //  }
 
   def main(args: Array[String]) {
-    val rand = new scala.util.Random(0)
-    for (pass <- 0 until 0) testInt(rand)
+    val rands = Array.tabulate(5) { _ => new scala.util.Random(0) }
     println("------------- adding short")
     for (pass <- 0 until 10) {
-      testInt(rand)
-      testShort(rand)
+      testInt(rands(0))
+      testShort(rands(1))
     }
     println("------------- adding long")
     for (pass <- 0 until 10) {
-      testInt(rand)
-      testShort(rand)
-      testLong(rand)
+      testInt(rands(2))
+      testShort(rands(3))
+      testLong(rands(4))
     }
   }
 
-  def Range = 10000000
-  def GetPct = 0
+  def Range = 10000
+  def GetPct = 50
+  def IterPct = 1.0 / Range
 
   def testInt(rand: scala.util.Random) = {
     test[Int]("  Int", rand, () => rand.nextInt(Range))
@@ -773,10 +843,16 @@ object FatLeaf {
       var matching = 0
       while (i > 0) {
         val key = keyGen()
-        val pct = rand.nextInt(200)
-        if (pct < 2 * GetPct) {
+        val pct = rand.nextDouble() * 100
+        if (pct < GetPct) {
           if (m.contains(key)) matching += 1
-        } else if ((pct & 1) == 0) {
+        } else if (pct < GetPct + IterPct) {
+          // iterate
+          var n = 0
+          //for (e <- m.elements) n += 1
+          for (e <- m) n += 1
+          assert(n == m.size)
+        } else if (pct < 50 + (GetPct + IterPct) / 2) {
           m(key) = "abc"
         } else {
           m -= key
@@ -801,10 +877,19 @@ object FatLeaf {
       var matching = 0
       while (i > 0) {
         val key = keyGen()
-        val pct = rand.nextInt(200)
-        if (pct < 2 * GetPct) {
+        val pct = rand.nextDouble() * 100
+        if (pct < GetPct) {
           if (m.containsKey(key)) matching += 1
-        } else if ((pct & 1) == 0) {
+        } else if (pct < GetPct + IterPct) {
+          // iterate
+          var n = 0
+          val iter = m.entrySet.iterator
+          while (iter.hasNext) {
+            iter.next()
+            n += 1
+          }
+          assert(n == m.size)
+        } else if (pct < 50 + (GetPct + IterPct) / 2) {
           m.put(key, "abc")
         } else {
           m.remove(key)
