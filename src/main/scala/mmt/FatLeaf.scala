@@ -10,6 +10,7 @@ object FatLeaf {
   import mmt.{FatLeafNotFound => NotFound}
 
   private def Capacity = 15
+  private def MinExtras = 6
 
   private def initKV[A,B](k: A, v: B) = {
     val kv = new Array[AnyRef](2 * Capacity)
@@ -54,15 +55,15 @@ object FatLeaf {
 
     //////// reads
 
-    @tailrec def nodeForGet(k: A)(implicit cmp: Ordering[A]): Node[A,B] = {
+    @tailrec def nodeForRead(k: A)(implicit cmp: Ordering[A]): Node[A,B] = {
       if (isLeaf) {
         this
       } else {
         val c = cmp.compare(k, key)
         if (c < 0) {
-          left.nodeForGet(k)
+          left.nodeForRead(k)
         } else if (c > 0) {
-          right.nodeForGet(k)
+          right.nodeForRead(k)
         } else {
           // exact match
           this
@@ -99,6 +100,7 @@ object FatLeaf {
       if (isLeaf) this else unsharedRight().unsharedRightmost()
     }
 
+    // TODO: do we need this?
     def unsharedPred(): Node[A,B] = {
       if (isLeaf) parentPred else unsharedLeft().unsharedRightmost()
     }
@@ -159,19 +161,15 @@ object FatLeaf {
 
     //////// writes
 
-    def put(k: A, v: B)(implicit cmp: Ordering[A]): AnyRef = {
-      nodeForPut(k).putHere(k, v)
-    }
-
-    @tailrec def nodeForPut(k: A)(implicit cmp: Ordering[A]): Node[A,B] = {
+    @tailrec def nodeForWrite(k: A)(implicit cmp: Ordering[A]): Node[A,B] = {
       if (isLeaf) {
         this
       } else {
         val c = cmp.compare(k, key)
         if (c < 0)
-          unsharedLeft().nodeForPut(k)
+          unsharedLeft().nodeForWrite(k)
         else if (c > 0)
-          unsharedRight().nodeForPut(k)
+          unsharedRight().nodeForWrite(k)
         else
           this
       }
@@ -276,6 +274,202 @@ object FatLeaf {
       parent.fixHeightAndRebalance()
     }
 
+    def removeHere(k: A)(implicit cmp: Ordering[A]): AnyRef = {
+      if (isLeaf)
+        leafRemove(k)
+      else
+        internalRemove()
+    }
+
+    def internalRemove(): AnyRef = {
+      val z = value
+
+      // It's easier to steal from the end of our predecessor than from the
+      // beginning of our successor.  This is an internal node, so its
+      // predecessor is a leaf.
+      val pred = unsharedLeft().unsharedRightmost()
+      assert(pred.isLeaf)
+
+      // steal one entry from the predecessor
+      val i = pred.extraSize - 1
+      key = pred.keys(i)
+      value = pred.values(i)
+      pred.trimExtras(i, 1)
+
+      if (pred.extraSize < MinExtras)
+        pred.refill()
+
+      z.asInstanceOf[AnyRef]
+    }
+
+    def openExtras(pos: Int, len: Int) {
+      val n = extraSize
+      System.arraycopy(extras, 2 * pos, extras, 2 * (pos + len), 2 * (n + len))
+      extraSize = n + len
+    }
+
+    def trimExtras(pos: Int, len: Int) {
+      assert(pos >= 0 && len >= 0 && pos + len <= extraSize)
+      val n = extraSize
+      System.arraycopy(extras, 2 * (pos + len), extras, 2 * pos, 2 * (n - (pos + len)))
+      var j = 2 * (n - len)
+      while (j < 2 * n) {
+        extras(j) = null
+        j += 1
+      }
+      extraSize = n - len
+    }
+
+    def leafRemove(k: A)(implicit cmp: Ordering[A]): AnyRef = {
+      val i = keySearch(k)
+      if (i < 0) {
+        NotFound
+      } else {
+        val z = values(i)
+        trimExtras(i, 1)
+        if (extraSize < MinExtras)
+          refill()
+        z.asInstanceOf[AnyRef]
+      }
+    }
+
+    def refill() {
+      // can't refill if this is the root
+      parent.height match {
+        case 2 => parent.pack2()
+        case 3 => parent.pack3()
+        case _ => // parent.height == -1 means we are the root, can't refill
+      }
+    }
+
+    def pack2() {
+      assert(left.isLeaf && right.isLeaf)
+
+      val n = left.extraSize + 1 + right.extraSize
+      if (n <= Capacity)
+        merge2(n)
+      else if (left.extraSize < right.extraSize)
+        shuffleLeft2()
+      else
+        shuffleRight2()
+    }
+
+    def merge2(newSize: Int) {
+      // We can merge the three nodes into one.  We'll use left's extra array
+      extras = if (left.shared) left.extras.clone() else left.extras
+      setKey(left.extraSize, key)
+      setValue(left.extraSize, value)
+      System.arraycopy(right.extras, 0, extras, 2 * (left.extraSize + 1), 2 * right.extraSize)
+
+      // turn this into a leaf
+      height = 1
+      extraSize = newSize
+      left = null
+      right = null
+
+      // rebalancing may be required
+      parent.fixHeightAndRebalance()
+    }
+
+    def shuffleLeft2() {
+      val n = (right.extraSize - MinExtras + 1) / 2
+
+      // deal with left
+      left.setKey(left.extraSize, key)
+      left.setValue(left.extraSize, value)
+      System.arraycopy(right.extras, 0, left.extras, 2 * (left.extraSize + 1), 2 * (n - 1))
+      left.extraSize += n
+
+      // fix this
+      key = right.keys(n - 1)
+      value = right.values(n - 1)
+
+      // trim from right
+      right.trimExtras(0, n)
+
+      assert(left.extraSize >= MinExtras)
+      assert(right.extraSize >= MinExtras)
+    }
+
+    def shuffleRight2() {
+      val n = (left.extraSize - MinExtras + 1) / 2
+
+      // deal with right
+      right.openExtras(0, n)
+      right.setKey(n - 1, key)
+      right.setValue(n - 1, value)
+      System.arraycopy(left.extras, 2 * (left.extraSize - n + 1), right.extras, 0, 2 * (n - 1))
+
+      // fix this
+      key = left.keys(left.extraSize - n)
+      value = left.values(left.extraSize - n)
+
+      // trim from left
+      left.trimExtras(left.extraSize - n, n)
+
+      assert(left.extraSize >= MinExtras)
+      assert(right.extraSize >= MinExtras)
+    }
+
+    def computeSize: Int = {
+      if (isLeaf)
+        extraSize
+      else
+        1 + left.computeSize + right.computeSize
+    }
+
+    def flattenInto(kv: Array[AnyRef], i: Int): Int = {
+      if (isLeaf) {
+        System.arraycopy(extras, 0, kv, i, 2 * extraSize)
+        i + 2 * extraSize
+      } else {
+        val i1 = left.flattenInto(kv, i)
+        kv(i1) = key.asInstanceOf[AnyRef]
+        kv(i1 + 1) = value.asInstanceOf[AnyRef]
+        right.flattenInto(kv, i1 + 2)
+      }
+    }
+
+    def pack3() {
+      val n = computeSize
+      val kv = new Array[AnyRef](2 * n)
+      flattenInto(kv, 0)
+      if (n <= 2 * Capacity + 1) {
+        unpack2(kv, n)
+        parent.fixHeightAndRebalance()
+      } else {
+        // we need three leaves again
+        val rightSize = (n - 2) / 3
+        val leftSize = n - rightSize - 1
+
+        left.unpack2(kv, leftSize)
+
+        key = kv(2 * leftSize).asInstanceOf[A]
+        value = kv(2 * leftSize + 1).asInstanceOf[B]
+
+        right = new Node(rightSize, this)
+        System.arraycopy(kv, 2 * (n - rightSize), right.extras, 0, 2 * rightSize)
+      }
+    }
+
+    def unpack2(kv: Array[AnyRef], n: Int) {
+      // we can fit into a branch and two leaves
+      val leftSize = n / 2
+
+      left = new Node[A,B](leftSize, this)
+      assert(2 * leftSize <= 2 * Capacity)
+      assert(2 * leftSize <= kv.length)
+      System.arraycopy(kv, 0, left.extras, 0, 2 * leftSize)
+
+      key = kv(2 * leftSize).asInstanceOf[A]
+      value = kv(2 * leftSize + 1).asInstanceOf[B]
+
+      right = new Node[A,B](n - leftSize - 1, this)
+      System.arraycopy(kv, 2 * (leftSize + 1), right.extras, 0, 2 * (n - leftSize - 1))
+
+      height = 2
+    }
+
     //////// rebalancing
 
     def fixHeightAndRebalance() {
@@ -365,19 +559,12 @@ object FatLeaf {
 
     @tailrec def maxKey: A = if (!isLeaf) right.maxKey else keys(extraSize - 1)
 
-    def computeSize: Int = {
-      if (isLeaf)
-        extraSize
-      else
-        1 + left.computeSize + right.computeSize
-    }
-
     def validate()(implicit cmp: Ordering[A]) {
       if (height < 0) {
         // rootHolder
         assert(left == null && right != null)
       } else if (isLeaf) {
-        assert(extraSize > 0 || (extraSize == 0 && parent.height < 0))
+        assert(extraSize >= MinExtras || parent.height < 0)
         assert(extraSize <= Capacity)
         assert(right == null)
       } else {
@@ -407,12 +594,12 @@ object FatLeaf {
     def size: Int = _size
 
     def contains(key: A): Boolean = {
-      val n = root.nodeForGet(key)
+      val n = root.nodeForRead(key)
       !n.isLeaf || n.keySearch(key) >= 0
     }
 
     def get(key: A): Option[B] = {
-      val n = root.nodeForGet(key)
+      val n = root.nodeForRead(key)
       if (!n.isLeaf) {
         Some(n.value)
       } else {
@@ -425,7 +612,7 @@ object FatLeaf {
     }
 
     def apply(key: A): B = {
-      val n = root.nodeForGet(key)
+      val n = root.nodeForRead(key)
       if (n.extraSize == 0) {
         n.value
       } else {
@@ -498,11 +685,29 @@ object FatLeaf {
     }
 
     private def putImpl(key: A, value: B): AnyRef = {
-      val z = root.put(key, value)
+      val z = root.nodeForWrite(key).putHere(key, value)
       if (z eq NotFound)
         _size += 1
       z
     }
+
+    def -=(key: A) {
+      removeImpl(key)
+      //validate()
+    }
+
+    def remove(key: A): Option[B] = {
+      val z = removeImpl(key)
+      if (z eq NotFound) None else Some(z.asInstanceOf[B])
+    }
+
+    private def removeImpl(key: A): AnyRef = {
+      val z = root.nodeForWrite(key).removeHere(key)
+      if (z ne NotFound)
+        _size -= 1
+      z
+    }
+
   }
 
   var cmpCount = 0
@@ -530,11 +735,11 @@ object FatLeaf {
     }
   }
 
-  def Range = 250 // 1<<21
-  def GetPct = 50
+  def Range = 10000000
+  def GetPct = 0
 
   def testInt(rand: scala.util.Random) = {
-    test[Int]("Int", rand, () => rand.nextInt(Range))
+    test[Int]("  Int", rand, () => rand.nextInt(Range))
   }
 
   def testShort(rand: scala.util.Random) = {
@@ -542,36 +747,39 @@ object FatLeaf {
   }
 
   def testLong(rand: scala.util.Random) = {
-    test[Long]("Long", rand, () => rand.nextInt(Range).asInstanceOf[Long])
+    test[Long](" Long", rand, () => rand.nextInt(Range).asInstanceOf[Long])
   }
 
   def test[A](name: String, rand: scala.util.Random, keyGen: () => A)(implicit cmp: Ordering[A]) {
     cmpCount = 0
-    val a = testTTree(rand, keyGen)
+    val (abest,aavg) = testTTree(rand, keyGen)
     val ac = cmpCount
+    //println("!!")
     cmpCount = 0
-    //println()
-    val b = testJavaTree(rand, keyGen)
+    val (bbest,bavg) = testJavaTree(rand, keyGen)
     val bc = cmpCount
-    println(name + ": FatLeaf: " + a + " nanos/op,  java.util.TreeMap: " + b + " nanos/op")
+    println(name + ": FatLeaf: " + abest + " nanos/op (" + aavg + " avg),  " +
+            "java.util.TreeMap: " + bbest + " nanos/op (" + bavg + " avg)")
     if (ac > 0) println("  FatLeaf: " + ac + " compares,  java.util.TreeMap: " + bc + " compares")
   }
 
-  def testTTree[A](rand: scala.util.Random, keyGen: () => A)(implicit cmp: Ordering[A]): Int = {
-    //val m = new MutableTree[A,String]
+  def testTTree[A](rand: scala.util.Random, keyGen: () => A)(implicit cmp: Ordering[A]): (Long,Long) = {
+    val tt0 = System.currentTimeMillis
+    val m = new MutableTree[A,String]
     var best = Long.MaxValue
     for (group <- 1 until 10000) {
-      val m = new MutableTree[A,String]
       var i = 1000
       val t0 = System.nanoTime
       var matching = 0
       while (i > 0) {
         val key = keyGen()
-        val pct = rand.nextInt(100)
-        if (pct < GetPct) {
+        val pct = rand.nextInt(200)
+        if (pct < 2 * GetPct) {
           if (m.contains(key)) matching += 1
-        } else {
+        } else if ((pct & 1) == 0) {
           m(key) = "abc"
+        } else {
+          m -= key
         }
         i -= 1
       }
@@ -579,24 +787,27 @@ object FatLeaf {
       val elapsed = System.nanoTime - t0
       best = best min elapsed
     }
-    (best / 1000).asInstanceOf[Int]
+    val total = System.currentTimeMillis - tt0
+    (best / 1000, total / 10)
   }
 
-  def testJavaTree[A](rand: scala.util.Random, keyGen: () => A)(implicit cmp: Ordering[A]): Int = {
-    //val m = new java.util.TreeMap[A,String](cmp)
+  def testJavaTree[A](rand: scala.util.Random, keyGen: () => A)(implicit cmp: Ordering[A]): (Long,Long) = {
+    val tt0 = System.currentTimeMillis
+    val m = new java.util.TreeMap[A,String](cmp)
     var best = Long.MaxValue
     for (group <- 1 until 10000) {
-      val m = new java.util.TreeMap[A,String](cmp)
       var i = 1000
       val t0 = System.nanoTime
       var matching = 0
       while (i > 0) {
         val key = keyGen()
-        val pct = rand.nextInt(100)
-        if (pct < GetPct) {
+        val pct = rand.nextInt(200)
+        if (pct < 2 * GetPct) {
           if (m.containsKey(key)) matching += 1
-        } else {
+        } else if ((pct & 1) == 0) {
           m.put(key, "abc")
+        } else {
+          m.remove(key)
         }
         i -= 1
       }
@@ -604,6 +815,7 @@ object FatLeaf {
       val elapsed = System.nanoTime - t0
       best = best min elapsed
     }
-    (best / 1000).asInstanceOf[Int]
+    val total = System.currentTimeMillis - tt0
+    (best / 1000, total / 10)
   }
 }
