@@ -71,23 +71,21 @@ object FatLeaf {
       }
     }
 
-    def keySearch(k: A)(implicit cmp: Ordering[A]): Int = keySearch(k, 0, extraSize - 1)
-
-    /** On entry, k > key(min-1) && k < key(max+1) */
-    @tailrec def keySearch(k: A, min: Int, max: Int)(implicit cmp: Ordering[A]): Int = {
-      if (min > max) {
-        // min == max + 1, so k > key(min-1) && k < key(min).  Insert at min
-        -(min + 1)
-      } else {
-        val mid = (min + max) >>> 1
+    def keySearch(k: A)(implicit cmp: Ordering[A]): Int = {
+      var b = 0
+      var e = extraSize
+      while (b < e) {
+        val mid = (b + e) >>> 1
         val c = cmp.compare(k, keys(mid))
-        if (c < 0)
-          keySearch(k, min, mid - 1)
-        else if (c > 0)
-          keySearch(k, mid + 1, max)
-        else
-          mid
+        if (c < 0) {
+          e = mid
+        } else if (c > 0) {
+          b = mid + 1
+        } else {
+          return mid
+        }
       }
+      return -(b + 1)
     }
 
     def foreach(block: ((A,B)) => Unit) {
@@ -789,7 +787,7 @@ object FatLeaf {
 //    }
 //  }
 
-  def main(args: Array[String]) {
+  def main0(args: Array[String]) {
     val rands = Array.tabulate(5) { _ => new scala.util.Random(0) }
     println("------------- adding short")
     for (pass <- 0 until 10) {

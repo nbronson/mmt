@@ -7,8 +7,8 @@ import java.util.NoSuchElementException
 
 object BTree {
   // try 3, 2 for testing
-  def MaxKeys = 15
-  def MinKeysForPair = 13
+  def MaxKeys = 16 // 15
+  def MinKeysForPair = MaxKeys - 1
 
   final class Node[A,B](var generation: Long, // TODO: replace with Int + rollover logic
                         var numKeys: Int,     // TODO: replace with Short
@@ -32,23 +32,21 @@ object BTree {
       keysAndValues
     }
 
-    def keySearch(k: A)(implicit cmp: Ordering[A]): Int = keySearch(k, 0, numKeys - 1)
-
-    /** On entry, k > key(min-1) && k < key(max+1) */
-    @tailrec def keySearch(k: A, min: Int, max: Int)(implicit cmp: Ordering[A]): Int = {
-      if (min > max) {
-        // min == max + 1, so k > key(min-1) && k < key(min).  Insert at min
-        -(min + 1)
-      } else {
-        val mid = (min + max) >>> 1
+    def keySearch(k: A)(implicit cmp: Ordering[A]): Int = {
+      var b = 0
+      var e = numKeys
+      while (b < e) {
+        val mid = (b + e) >>> 1
         val c = cmp.compare(k, keys(mid))
-        if (c < 0)
-          keySearch(k, min, mid - 1)
-        else if (c > 0)
-          keySearch(k, mid + 1, max)
-        else
-          mid
+        if (c < 0) {
+          e = mid
+        } else if (c > 0) {
+          b = mid + 1
+        } else {
+          return mid
+        }
       }
+      return -(b + 1)
     }
 
     //////// read
@@ -404,30 +402,33 @@ object BTree {
 
   var cmpCount = 0
 
-  implicit val myOrder = new Ordering[Int] {
-    def compare(x: Int, y: Int): Int = {
-      cmpCount += 1
-      if (x < y) -1 else if (x == y) 0 else 1
-    }
-  }
+//  implicit val myOrder = new Ordering[Int] {
+//    def compare(x: Int, y: Int): Int = {
+//      cmpCount += 1
+//      if (x < y) -1 else if (x == y) 0 else 1
+//    }
+//  }
 
   def main(args: Array[String]) {
-    val rands = Array.tabulate(5) { _ => new scala.util.Random(0) }
-    println("------------- adding short")
+    val rands = Array.tabulate(6) { _ => new scala.util.Random(0) }
     for (pass <- 0 until 10) {
       testInt(rands(0))
-      testShort(rands(1))
+    }
+    println("------------- adding short")
+    for (pass <- 0 until 10) {
+      testInt(rands(1))
+      testShort(rands(2))
     }
     println("------------- adding long")
     for (pass <- 0 until 10) {
-      testInt(rands(2))
-      testShort(rands(3))
-      testLong(rands(4))
+      testInt(rands(3))
+      testShort(rands(4))
+      testLong(rands(5))
     }
   }
 
   def Range = 10000
-  def GetPct = 50
+  def GetPct = 95
   def IterPct = 1.0 / Range
 
   def testInt(rand: scala.util.Random) = {
@@ -444,20 +445,59 @@ object BTree {
 
   def test[A](name: String, rand: scala.util.Random, keyGen: () => A)(implicit cmp: Ordering[A]) {
     cmpCount = 0
-    val (abest,aavg) = testTTree(rand, keyGen)
+    val (abest,aavg) = testBTree(rand, keyGen)
     val ac = cmpCount
     //println("!!")
     cmpCount = 0
-    val (bbest,bavg) = testJavaTree(rand, keyGen)
+    val (bbest,bavg) = testFatLeaf(rand, keyGen)
     val bc = cmpCount
+    cmpCount = 0
+    val (cbest,cavg) = testJavaTree(rand, keyGen)
+    val cc = cmpCount
     println(name + ": BTree: " + abest + " nanos/op (" + aavg + " avg),  " +
-            "java.util.TreeMap: " + bbest + " nanos/op (" + bavg + " avg)")
-    if (ac > 0) println("  BTree: " + ac + " compares,  java.util.TreeMap: " + bc + " compares")
+            name + ": FatLeaf: " + bbest + " nanos/op (" + bavg + " avg),  " +
+            "java.util.TreeMap: " + cbest + " nanos/op (" + cavg + " avg)")
+    if (ac > 0)
+      println("  BTree: " + ac + " compares,  FatLeaf: " + bc + " compares,  java.util.TreeMap: " + cc + " compares")
   }
 
-  def testTTree[A](rand: scala.util.Random, keyGen: () => A)(implicit cmp: Ordering[A]): (Long,Long) = {
+  def testBTree[A](rand: scala.util.Random, keyGen: () => A)(implicit cmp: Ordering[A]): (Long,Long) = {
     val tt0 = System.currentTimeMillis
     val m = new MutableTree[A,String]
+    var best = Long.MaxValue
+    for (group <- 1 until 10000) {
+      var i = 1000
+      val t0 = System.nanoTime
+      var matching = 0
+      while (i > 0) {
+        val key = keyGen()
+        val pct = rand.nextDouble() * 100
+        if (pct < GetPct) {
+          if (m.contains(key)) matching += 1
+        } else if (pct < GetPct + IterPct) {
+          // iterate
+          var n = 0
+          //for (e <- m.elements) n += 1
+          for (e <- m) n += 1
+          assert(n == m.size)
+        } else if (pct < 50 + (GetPct + IterPct) / 2) {
+          m(key) = "abc"
+        } else {
+          m -= key
+        }
+        i -= 1
+      }
+      if (matching < 0) println("unlikely")
+      val elapsed = System.nanoTime - t0
+      best = best min elapsed
+    }
+    val total = System.currentTimeMillis - tt0
+    (best / 1000, total / 10)
+  }
+
+  def testFatLeaf[A](rand: scala.util.Random, keyGen: () => A)(implicit cmp: Ordering[A]): (Long,Long) = {
+    val tt0 = System.currentTimeMillis
+    val m = new FatLeaf.MutableTree[A,String]
     var best = Long.MaxValue
     for (group <- 1 until 10000) {
       var i = 1000
