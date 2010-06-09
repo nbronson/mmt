@@ -409,7 +409,7 @@ object BTree {
 //    }
 //  }
 
-  def main(args: Array[String]) {
+  def main0(args: Array[String]) {
     val rands = Array.tabulate(6) { _ => new scala.util.Random(0) }
     for (pass <- 0 until 10) {
       testInt(rands(0))
@@ -427,8 +427,9 @@ object BTree {
     }
   }
 
-  def Range = 10000
-  def GetPct = 95
+  def Range = 100000
+  def InitialGetPct = 50
+  def GetPct = 90
   def IterPct = 1.0 / Range
 
   def testInt(rand: scala.util.Random) = {
@@ -466,21 +467,22 @@ object BTree {
     val m = new MutableTree[A,String]
     var best = Long.MaxValue
     for (group <- 1 until 10000) {
+      val gp = if (group < 1000) InitialGetPct else GetPct
       var i = 1000
       val t0 = System.nanoTime
       var matching = 0
       while (i > 0) {
         val key = keyGen()
         val pct = rand.nextDouble() * 100
-        if (pct < GetPct) {
+        if (pct < gp) {
           if (m.contains(key)) matching += 1
-        } else if (pct < GetPct + IterPct) {
+        } else if (pct < gp + IterPct) {
           // iterate
           var n = 0
           //for (e <- m.elements) n += 1
           for (e <- m) n += 1
           assert(n == m.size)
-        } else if (pct < 50 + (GetPct + IterPct) / 2) {
+        } else if (pct < 50 + (gp + IterPct) / 2) {
           m(key) = "abc"
         } else {
           m -= key
@@ -489,7 +491,7 @@ object BTree {
       }
       if (matching < 0) println("unlikely")
       val elapsed = System.nanoTime - t0
-      best = best min elapsed
+      if (group >= 1000) best = best min elapsed
     }
     val total = System.currentTimeMillis - tt0
     (best / 1000, total / 10)
@@ -500,21 +502,22 @@ object BTree {
     val m = new FatLeaf.MutableTree[A,String]
     var best = Long.MaxValue
     for (group <- 1 until 10000) {
+      val gp = if (group < 1000) InitialGetPct else GetPct
       var i = 1000
       val t0 = System.nanoTime
       var matching = 0
       while (i > 0) {
         val key = keyGen()
         val pct = rand.nextDouble() * 100
-        if (pct < GetPct) {
+        if (pct < gp) {
           if (m.contains(key)) matching += 1
-        } else if (pct < GetPct + IterPct) {
+        } else if (pct < gp + IterPct) {
           // iterate
           var n = 0
           //for (e <- m.elements) n += 1
           for (e <- m) n += 1
           assert(n == m.size)
-        } else if (pct < 50 + (GetPct + IterPct) / 2) {
+        } else if (pct < 50 + (gp + IterPct) / 2) {
           m(key) = "abc"
         } else {
           m -= key
@@ -523,7 +526,7 @@ object BTree {
       }
       if (matching < 0) println("unlikely")
       val elapsed = System.nanoTime - t0
-      best = best min elapsed
+      if (group >= 1000) best = best min elapsed
     }
     val total = System.currentTimeMillis - tt0
     (best / 1000, total / 10)
@@ -534,15 +537,16 @@ object BTree {
     val m = new java.util.TreeMap[A,String](cmp)
     var best = Long.MaxValue
     for (group <- 1 until 10000) {
+      val gp = if (group < 1000) InitialGetPct else GetPct
       var i = 1000
       val t0 = System.nanoTime
       var matching = 0
       while (i > 0) {
         val key = keyGen()
         val pct = rand.nextDouble() * 100
-        if (pct < GetPct) {
+        if (pct < gp) {
           if (m.containsKey(key)) matching += 1
-        } else if (pct < GetPct + IterPct) {
+        } else if (pct < gp + IterPct) {
           // iterate
           var n = 0
           val iter = m.entrySet.iterator
@@ -551,7 +555,7 @@ object BTree {
             n += 1
           }
           assert(n == m.size)
-        } else if (pct < 50 + (GetPct + IterPct) / 2) {
+        } else if (pct < 50 + (gp + IterPct) / 2) {
           m.put(key, "abc")
         } else {
           m.remove(key)
@@ -560,7 +564,7 @@ object BTree {
       }
       if (matching < 0) println("unlikely")
       val elapsed = System.nanoTime - t0
-      best = best min elapsed
+      if (group >= 1000) best = best min elapsed
     }
     val total = System.currentTimeMillis - tt0
     (best / 1000, total / 10)
