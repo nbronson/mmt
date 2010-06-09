@@ -6,6 +6,7 @@ import java.util.NoSuchElementException
 // BTree
 
 object BTree {
+  // try 3, 2 for testing
   def MaxKeys = 15
   def MinKeysForPair = 13
 
@@ -92,6 +93,12 @@ object BTree {
       }      
     }
 
+    def overfullChild(i: Int) {
+      // TODO: optimize
+      splitChild(i)
+      checkJoin(i) || checkJoin(i + 1)
+    }
+
     def splitChild(i: Int) {
       val lhs = children(i)
       assert(lhs.numKeys == MaxKeys && lhs.generation == generation)
@@ -153,7 +160,7 @@ object BTree {
         val c = unsharedChild(-(i+1))
         val z = c.put(k, v)
         if (c.numKeys == MaxKeys)
-          splitChild(-(i+1))
+          overfullChild(-(i+1))
         z
       }
     }
@@ -198,17 +205,33 @@ object BTree {
       val z = Some(values(i))
       val kv = unsharedKeysAndValues
       System.arraycopy(kv, 2 * (i + 1), kv, 2 * i, 2 * (numKeys - i - 1))
-      kv(2 * numKeys - 2) = null
-      kv(2 * numKeys - 1) = null
+      kv(2 * (numKeys - 1)) = null
+      kv(2 * (numKeys - 1) + 1) = null
       numKeys -= 1
       z
     }
 
-    def checkJoin(i: Int) {
-      if (i == 0) {
-        checkJoin(i + 1)
-      } else if (children(i - 1).numKeys + children(i).numKeys < MinKeysForPair)
+    def checkJoin(i: Int): Boolean = {
+      if (i + 1 <= numKeys && children(i).numKeys + children(i + 1).numKeys < MinKeysForPair) {
+        joinChildren(i)
+        true
+      } else if (i > 0 && children(i - 1).numKeys + children(i).numKeys < MinKeysForPair) {
         joinChildren(i - 1)
+        true
+      } else if (children(i).numKeys == 0) {
+        // TODO: optimize
+        // neighbors may have Max - 1, so we can't necessarily join (without a subsequent split)
+        val ii = math.max(i - 1, 0)
+        joinChildren(ii)
+        if (children(ii).numKeys == MaxKeys) {
+          splitChild(ii)
+          false
+        } else {
+          true
+        }
+      } else {
+        false
+      }
     }
 
     def joinChildren(i: Int) {
@@ -226,10 +249,11 @@ object BTree {
 
       // splice out rhs
       val kv = unsharedKeysAndValues
-      System.arraycopy(kv, 2 * (i + 2), kv, 2 * (i + 1), 2 * (numKeys - i - 2))
+      System.arraycopy(kv, 2 * (i + 1), kv, 2 * i, 2 * (numKeys - i - 1))
       System.arraycopy(children, i + 2, children, i + 1, numKeys - i - 1)
-      kv(2 * numKeys - 2) = null
-      kv(2 * numKeys - 1) = null
+      kv(2 * (numKeys - 1)) = null
+      kv(2 * (numKeys - 1) + 1) = null
+      children(numKeys) = null
       numKeys -= 1
     }
 
@@ -243,7 +267,8 @@ object BTree {
       if (children != null) children(i).visit(v)
     }
 
-    def validate() {
+    def validate(isRoot: Boolean) {
+      assert(numKeys > 0 || (isRoot && children == null))
       assert(numKeys <= MaxKeys)
       for (i <- 0 until MaxKeys) {
         assert((keys(i) == null) == (i >= numKeys))
@@ -255,7 +280,7 @@ object BTree {
         for (i <- 0 until numKeys)
           assert(children(i).numKeys + children(i+1).numKeys >= MinKeysForPair)
         for (i <- 0 to numKeys)
-          children(i).validate()
+          children(i).validate(false)
       }
     }
   }
@@ -275,7 +300,7 @@ object BTree {
 
     def elements: Iterator[(A,B)] = new Iterator[(A,B)] {
       private val nodeStack = new Array[Node[A,B]](32) // TODO: compute a tighter bound
-      private val posStack = new Array[Int](32) // TODO: compute a tighter bound
+      private val posStack = new Array[Int](32)
       private var depth = 0
       if (root.numKeys != 0) pushMin(root)
 
@@ -322,16 +347,17 @@ object BTree {
     }
 
     def validate() {
+      root.validate(true)
       var s = 0
       root visit { _ => s += 1 }
       assert(_size == s)
       if (_size >= 2) {
-        for (entries <- elements.toSeq.sliding(2)) {
+        val ss = elements.toSeq
+        for (entries <- ss.sliding(2)) {
           assert(cmp.compare(entries(0)._1, entries(1)._1) < 0)
         }
       }
       assert(_size == elements.toSeq.size)
-      root.validate()
     }
   }
 
@@ -349,7 +375,7 @@ object BTree {
         splitRoot()
       if (z.isEmpty)
         _size += 1
-      validate()
+      //validate()
       z
     }
 
@@ -371,7 +397,7 @@ object BTree {
         root = root.unsharedChild(0)
       if (!z.isEmpty)
         _size -= 1
-      validate()
+      //validate()
       z
     }
   }
