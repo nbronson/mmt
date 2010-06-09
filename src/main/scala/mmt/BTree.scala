@@ -222,7 +222,7 @@ object BTree {
         val ii = math.max(i - 1, 0)
         joinChildren(ii)
         if (children(ii).numKeys == MaxKeys) {
-          splitChild(ii)
+          overfullChild(ii)
           false
         } else {
           true
