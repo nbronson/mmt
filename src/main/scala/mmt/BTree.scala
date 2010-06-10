@@ -46,14 +46,14 @@ object BTree {
           return mid
         }
       }
-      return -(b + 1)
+      return ~b
     }
 
     //////// read
 
     @tailrec def contains(k: A)(implicit cmp: Ordering[A]): Boolean = {
       val i = keySearch(k)
-      i >= 0 || (children != null && children(-(i+1)).contains(k))
+      i >= 0 || (children != null && children(~i).contains(k))
     }
 
     @tailrec def get(k: A)(implicit cmp: Ordering[A]): Option[B] = {
@@ -63,7 +63,7 @@ object BTree {
       else if (children == null)
         None
       else
-        children(-(i+1)).get(k)
+        children(~i).get(k)
     }
 
     //////// sharing machinery
@@ -151,14 +151,14 @@ object BTree {
         Some(z)
       } else if (children == null) {
         // insert here
-        insertEntry(-(i + 1), k, v)
+        insertEntry(~i, k, v)
         None
       } else {
         // insert in child
-        val c = unsharedChild(-(i+1))
+        val c = unsharedChild(~i)
         val z = c.put(k, v)
         if (c.numKeys == MaxKeys)
-          overfullChild(-(i+1))
+          overfullChild(~i)
         z
       }
     }
@@ -172,7 +172,7 @@ object BTree {
         // miss
         None
       } else {
-        val ii = -(i+1)
+        val ii = ~i
         val z = unsharedChild(ii).remove(k)
         checkJoin(ii)
         z
@@ -409,13 +409,13 @@ object BTree {
 //    }
 //  }
 
-  def main0(args: Array[String]) {
+  def main(args: Array[String]) {
     val rands = Array.tabulate(6) { _ => new scala.util.Random(0) }
-    for (pass <- 0 until 10) {
+    for (pass <- 0 until 1) {
       testInt(rands(0))
     }
     println("------------- adding short")
-    for (pass <- 0 until 10) {
+    for (pass <- 0 until 1) {
       testInt(rands(1))
       testShort(rands(2))
     }
@@ -427,9 +427,9 @@ object BTree {
     }
   }
 
-  def Range = 100000
+  def Range = 100
   def InitialGetPct = 50
-  def GetPct = 90
+  def GetPct = 100
   def IterPct = 1.0 / Range
 
   def testInt(rand: scala.util.Random) = {
