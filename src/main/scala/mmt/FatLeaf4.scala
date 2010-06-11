@@ -6,8 +6,8 @@ import annotation.tailrec
 
 object FatLeaf4 {
 
-  def LeafMin = 8
-  def LeafMax = 2 * LeafMin 
+  def LeafMin = 1 // 8
+  def LeafMax = 2 * LeafMin + 1
 
   abstract class Node[A,B](var parent: Branch[A,B])
 
@@ -21,11 +21,14 @@ object FatLeaf4 {
   }
 
   class Leaf[@specialized A,B](par0: Branch[A,B],
-                               var size: Int,
+                               var _size: Int,
                                var keys: Array[A],
                                var values: Array[B]) extends Node[A,B](par0) {
     def this(par0: Branch[A,B], size0: Int)(implicit am: ClassManifest[A], bm: ClassManifest[B]) =
         this(par0, size0, new Array[A](LeafMax), new Array[B](LeafMax))
+
+    def size = _size
+    def size_=(v: Int) { assert(v >= LeafMin - 1 || parent.height < 0) ; _size = v }
   }
 
   def newEmptyRootHolder[@specialized A,B](implicit am: ClassManifest[A], bm: ClassManifest[B]) = {
@@ -34,7 +37,7 @@ object FatLeaf4 {
     h
   }
 
-  class MutableTree[@specialized A,B](rootHolder: Branch[A,B], var _size: Int)(
+  class MutableTree[@specialized A,B](val rootHolder: Branch[A,B], var _size: Int)(
           implicit cmp: Ordering[A], am: ClassManifest[A], bm: ClassManifest[B]) {
 
     def this()(implicit cmp: Ordering[A], am: ClassManifest[A], bm: ClassManifest[B]) =
@@ -52,19 +55,27 @@ object FatLeaf4 {
 
     //////// reads
 
-    def contains(k: A): Boolean = contains(rootHolder.right, k)
-
-    @tailrec final def contains(n: Node[A,B], k: A): Boolean = n match {
-      case b: Branch[A,B] => {
-        val c = cmp.compare(k, b.key)
-        c >= 0 || contains(if (c < 0) b.left else b.right, k)
-      }
-      case t: Leaf[A,B] => keySearch(t, k) >= 0
+    def contains(k: A): Boolean = {
+      var n = rootHolder.right
+      (while (true) {
+        n match {
+          case b: Branch[A,B] => {
+            val c = cmp.compare(k, b.key)
+            if (c == 0)
+              return true
+            n = if (c < 0) b.left else b.right
+          }
+          case t: Leaf[A,B] => {
+            return keySearch(t, k) >= 0
+          }
+        }
+      }).asInstanceOf[Nothing]
     }
 
     def get(k: A): Option[B] = get(rootHolder.right, k)
 
-    @tailrec final def get(n: Node[A,B], k: A): Option[B] = n match {
+    def get(n: Node[A,B], k: A): Option[B] = n match {
+      // TODO: loopify
       case b: Branch[A,B] => {
         val c = cmp.compare(k, b.key)
         if (c == 0) Some(b.value) else get(if (c < 0) b.left else b.right, k)
@@ -96,7 +107,13 @@ object FatLeaf4 {
 
     def put(k: A, v: B): Option[B] = put(unsharedRight(rootHolder), k, v)
 
-    @tailrec final def put(n: Node[A,B], k: A, v: B): Option[B] = n match {
+    def update(k: A, v: B) {
+      put(k, v)
+      // validate()
+    }
+
+    // TODO: loopify
+    def put(n: Node[A,B], k: A, v: B): Option[B] = n match {
       case b: Branch[A,B] => {
         val c = cmp.compare(k, b.key)
         if (c == 0) {
@@ -156,8 +173,7 @@ object FatLeaf4 {
       clear(tL, leftSize, 1 + rightSize)
 
       // link into parent
-      if (b.parent.left eq tL) b.parent.left = b else b.parent.right = b
-      repair(b.parent)
+      replaceAndRepair(tL, b)
     }
 
     def clear(t: Leaf[A,B], pos: Int, len: Int) {
@@ -174,7 +190,13 @@ object FatLeaf4 {
 
     def remove(k: A): Option[B] = remove(unsharedRight(rootHolder), k)
 
-    @tailrec final def remove(n: Node[A,B], k: A): Option[B] = n match {
+    def -=(k: A) {
+      remove(k)
+      //validate()
+    }
+
+    // TODO: loopify
+    def remove(n: Node[A,B], k: A): Option[B] = n match {
       case b: Branch[A,B] => {
         val c = cmp.compare(k, b.key)
         if (c == 0) {
@@ -199,7 +221,8 @@ object FatLeaf4 {
       }
     }
 
-    @tailrec final def removeMax(target: Branch[A,B], n: Node[A,B]): Unit = n match {
+    // TODO: loopify
+    def removeMax(target: Branch[A,B], n: Node[A,B]): Unit = n match {
       case b: Branch[A,B] => {
         removeMax(target, unsharedRight(b))
       }
@@ -242,17 +265,19 @@ object FatLeaf4 {
       }
       case 3 => {
         // refill is easier if our sibling is a leaf
-        if (t.parent.left eq t) {
-          rotateLeft(t.parent)
+        val p = t.parent
+        if (p.left eq t) {
+          replace(p, rotateLeft(p))
           refillAsLeft(t)
         } else {
-          rotateRight(t.parent)
+          replace(p, rotateRight(p))
           refillAsRight(t)
         }
       }
     }
 
     def refillAsLeft(tL: Leaf[A,B]) {
+      assert(tL.size == LeafMin - 1)
       val b = tL.parent
       val tR = unsharedRight(b).asInstanceOf[Leaf[A,B]]
       if (tR.size == LeafMin)
@@ -268,6 +293,7 @@ object FatLeaf4 {
     }
   
     def refillAsRight(tR: Leaf[A,B]) {
+      assert(tR.size == LeafMin - 1)
       val b = tR.parent
       val tL = unsharedLeft(b).asInstanceOf[Leaf[A,B]]
       if (tL.size == LeafMin)
@@ -281,16 +307,15 @@ object FatLeaf4 {
     }
 
     def merge(b: Branch[A,B], tL: Leaf[A,B], tR: Leaf[A,B]) {
-      assert(1 + tL.size + tR.size == LeafMax)
+      assert(1 + tL.size + tR.size == LeafMax - 1)
       val leftSize = tL.size
       tL.keys(leftSize) = b.key
       tL.values(leftSize) = b.value
-      System.arraycopy(tR.keys, 0, tL.keys, leftSize + 1, LeafMax - (leftSize + 1))
-      tL.size = LeafMax
+      System.arraycopy(tR.keys, 0, tL.keys, leftSize + 1, LeafMax - 1 - (leftSize + 1))
+      tL.size = LeafMax - 1
       tL.parent = b.parent
 
-      if (b.parent.left eq b) b.parent.left = tL else b.parent.right = tL
-      repair(b.parent)
+      replaceAndRepair(b, tL)
     }
 
     //////// sharing machinery
@@ -346,9 +371,9 @@ object FatLeaf4 {
         // Left is too large, rotate right.  If left.right is larger than
         // left.left then rotating right will lead to a -2 balance, so
         // first we have to rotateLeft on left.
-        replaceInParent(b, h0, if (balance(b.left) < 0) rotateRightOverLeft(b) else rotateRight(b))
+        replaceAndMaybeRepair(b, h0, if (balance(b.left) < 0) rotateRightOverLeft(b) else rotateRight(b))
       } else if (bal < -1) {
-        replaceInParent(b, h0, if (balance(b.right) > 0) rotateLeftOverRight(b) else rotateLeft(b))
+        replaceAndMaybeRepair(b, h0, if (balance(b.right) > 0) rotateLeftOverRight(b) else rotateLeft(b))
       } else {
         // no rotations needed, just update height
         val h = 1 + math.max(hL, hR)
@@ -359,10 +384,19 @@ object FatLeaf4 {
       }
     }
 
-    def replaceInParent(n0: Node[A,B], h0: Int, n: Branch[A,B]) {
-      if (n.parent.right eq n0) n.parent.right = n else n.parent.left = n
-
+    def replaceAndMaybeRepair(n0: Node[A,B], h0: Int, n: Branch[A,B]) {
+      replace(n0, n)
       if (n.height != h0) repair(n.parent)
+    }
+
+    def replaceAndRepair(n0: Node[A,B], n: Node[A,B]) {
+      replace(n0, n)
+      repair(n.parent)
+    }
+
+    def replace(n0: Node[A,B], n: Node[A,B]) {
+      val p = n.parent
+      if (p.left eq n0) p.left = n else p.right = n
     }
 
     def rotateRight(b: Branch[A,B]): Branch[A,B] = {
@@ -408,5 +442,294 @@ object FatLeaf4 {
       b.right = rotateRight(unsharedRight(b).asInstanceOf[Branch[A,B]])
       rotateLeft(b)
     }
+
+    //////// enumeration
+
+    def foreach(block: ((A,B)) => Unit) { foreach(rootHolder.right, block) }
+
+    def foreach(n: Node[A,B], block: ((A,B)) => Unit): Unit = n match {
+      case b: Branch[A,B] => {
+        foreach(b.left, block)
+        block((b.key, b.value))
+        foreach(b.right, block)
+      }
+      case t: Leaf[A,B] => {
+        var i = 0
+        while (i < t.size) { block((t.keys(i), t.values(i))) ; i += 1 }
+      }
+    }
+
+    def elements: Iterator[(A,B)] = new Iterator[(A,B)] {
+      private val stack = new Array[Node[A,B]](height(rootHolder.right))
+      private var depth = 0
+      private var index = 0
+
+      if (_size > 0) pushMin(rootHolder.right)
+
+      @tailrec final def pushMin(n: Node[A,B]) {
+        stack(depth) = n
+        depth += 1
+        n match {
+          case b: Branch[A,B] => pushMin(b.left)
+          case _ => {}
+        }
+      }
+
+      private def advance(): Unit = stack(depth - 1) match {
+        case b: Branch[A,B] => {
+          // pop current node
+          depth -= 1
+          pushMin(b.right)
+        }
+        case t: Leaf[A,B] => {
+          if (index + 1 < t.size) {
+            // more entries in this node
+            index += 1
+          } else {
+            index = 0
+            // no children, so just pop
+            depth -= 1
+            stack(depth) = null
+          }
+        }
+      }
+
+      def hasNext = depth > 0
+
+      def next = {
+        if (depth == 0) throw new IllegalStateException
+        val z = stack(depth - 1) match {
+          case b: Branch[A,B] => (b.key, b.value)
+          case t: Leaf[A,B] => (t.keys(index), t.values(index))
+        }
+        advance()
+        z
+      }
+    }
+
+    //////// validation
+
+    def validate() {
+      val root = rootHolder.right
+      if (_size == 0) {
+        assert(root.isInstanceOf[Leaf[_,_]] && root.asInstanceOf[Leaf[_,_]].size == 0)
+      } else {
+        validate(rootHolder)
+        assert(_size == computeSize(root))
+      }
+      if (_size >= 2) {
+        for (entries <- elements.toSeq.sliding(2)) {
+          assert(cmp.compare(entries(0)._1, entries(1)._1) < 0)
+        }
+      }
+      val s = elements.toSeq
+      val ss = s.size
+      assert(_size == ss)
+    }
+
+    def computeSize(n: Node[A,B]): Int = n match {
+      case b: Branch[A,B] => computeSize(b.left) + 1 + computeSize(b.right)
+      case t: Leaf[A,B] => t.size
+    }
+
+    def validate(n: Node[A,B]): Unit = n match {
+      case b: Branch[A,B] if b.height < 0 => {
+        // rootHolder
+        assert(b.left == null && b.right != null)
+        validate(b.right)
+      }
+      case b: Branch[A,B] => {
+        assert(b.left != null && (b.left.parent eq b))
+        assert(b.right != null && (b.right.parent eq b))
+        assert(b.height == 1 + math.max(height(b.left), height(b.right)))
+        assert(math.abs(balance(b)) <= 1)
+        validate(b.left)
+        validate(b.right)
+      }
+      case t: Leaf[A,B] => {
+        assert(t.size >= LeafMin || t.parent.height < 0)
+        assert(t.size < LeafMax)
+      }
+    }
+  }
+
+  var cmpCount = 0
+
+//  implicit val myOrder = new Ordering[Int] {
+//    def compare(x: Int, y: Int): Int = {
+//      cmpCount += 1
+//      if (x < y) -1 else if (x == y) 0 else 1
+//    }
+//  }
+
+  def main(args: Array[String]) {
+    for (n <- 5 until 100) {
+      val t = new MutableTree[Int,String]
+      for (i <- 0 until n) t(i) = "x"+i
+      for (i <- 0 until n) 
+        t -= i
+    }
+
+    val rands = Array.tabulate(6) { _ => new scala.util.Random(0) }
+    for (pass <- 0 until 10) {
+      testInt(rands(0))
+    }
+    println("------------- adding short")
+    for (pass <- 0 until 10) {
+      testInt(rands(1))
+      testShort(rands(2))
+    }
+    println("------------- adding long")
+    for (pass <- 0 until 10) {
+      testInt(rands(3))
+      testShort(rands(4))
+      testLong(rands(5))
+    }
+  }
+
+  def Range = 100000
+  def InitialGetPct = 50
+  def GetPct = 100 // 70 //95
+  def IterPct = 1.0 / Range
+
+  def testInt(rand: scala.util.Random) = {
+    test[Int]("  Int", rand, () => rand.nextInt(Range))
+  }
+
+  def testShort(rand: scala.util.Random) = {
+    test[Short]("Short", rand, () => rand.nextInt(Range).asInstanceOf[Short])
+  }
+
+  def testLong(rand: scala.util.Random) = {
+    test[Long](" Long", rand, () => rand.nextInt(Range).asInstanceOf[Long])
+  }
+
+  def test[A](name: String, rand: scala.util.Random, keyGen: () => A)(
+          implicit cmp: Ordering[A], am: ClassManifest[A]) {
+    cmpCount = 0
+    val (abest,aavg) = testFatLeaf(rand, keyGen)
+    val ac = cmpCount
+    //println("!!")
+    cmpCount = 0
+    val (bbest,bavg) = testFatLeaf4(rand, keyGen)
+    val bc = cmpCount
+    cmpCount = 0
+    val (cbest,cavg) = testJavaTree(rand, keyGen)
+    val cc = cmpCount
+    println(name + ": FatLeaf: " + abest + " nanos/op (" + aavg + " avg),  " +
+            name + ": FatLeaf4: " + bbest + " nanos/op (" + bavg + " avg),  " +
+            "java.util.TreeMap: " + cbest + " nanos/op (" + cavg + " avg)")
+    if (ac > 0)
+      println("  FatLeaf: " + ac + " compares,  FatLeaf4: " + bc +
+              " compares,  java.util.TreeMap: " + cc + " compares")
+  }
+
+  def testFatLeaf4[A](rand: scala.util.Random, keyGen: () => A)(
+          implicit cmp: Ordering[A], am: ClassManifest[A]): (Long,Long) = {
+    val tt0 = System.currentTimeMillis
+    val m = new FatLeaf4.MutableTree[A,String]
+    var best = Long.MaxValue
+    for (group <- 1 until 10000) {
+      val gp = if (group < 1000) InitialGetPct else GetPct
+      var i = 1000
+      val t0 = System.nanoTime
+      var matching = 0
+      while (i > 0) {
+        val key = keyGen()
+        val pct = rand.nextDouble() * 100
+        if (pct < gp) {
+          if (m.contains(key)) matching += 1
+        } else if (pct < gp + IterPct) {
+          // iterate
+          var n = 0
+          //for (e <- m.elements) n += 1
+          for (e <- m) n += 1
+          assert(n == m.size)
+        } else if (pct < 50 + (gp + IterPct) / 2) {
+          m(key) = "abc"
+        } else {
+          m -= key
+        }
+        i -= 1
+      }
+      if (matching < 0) println("unlikely")
+      val elapsed = System.nanoTime - t0
+      if (group >= 1000) best = best min elapsed
+    }
+    val total = System.currentTimeMillis - tt0
+    (best / 1000, total / 10)
+  }
+
+  def testFatLeaf[A](rand: scala.util.Random, keyGen: () => A)(implicit cmp: Ordering[A]): (Long,Long) = {
+    val tt0 = System.currentTimeMillis
+    val m = new FatLeaf.MutableTree[A,String]
+    var best = Long.MaxValue
+    for (group <- 1 until 10000) {
+      val gp = if (group < 1000) InitialGetPct else GetPct
+      var i = 1000
+      val t0 = System.nanoTime
+      var matching = 0
+      while (i > 0) {
+        val key = keyGen()
+        val pct = rand.nextDouble() * 100
+        if (pct < gp) {
+          if (m.contains(key)) matching += 1
+        } else if (pct < gp + IterPct) {
+          // iterate
+          var n = 0
+          //for (e <- m.elements) n += 1
+          for (e <- m) n += 1
+          assert(n == m.size)
+        } else if (pct < 50 + (gp + IterPct) / 2) {
+          m(key) = "abc"
+        } else {
+          m -= key
+        }
+        i -= 1
+      }
+      if (matching < 0) println("unlikely")
+      val elapsed = System.nanoTime - t0
+      if (group >= 1000) best = best min elapsed
+    }
+    val total = System.currentTimeMillis - tt0
+    (best / 1000, total / 10)
+  }
+
+  def testJavaTree[A](rand: scala.util.Random, keyGen: () => A)(implicit cmp: Ordering[A]): (Long,Long) = {
+    val tt0 = System.currentTimeMillis
+    val m = new java.util.TreeMap[A,String](cmp)
+    var best = Long.MaxValue
+    for (group <- 1 until 10000) {
+      val gp = if (group < 1000) InitialGetPct else GetPct
+      var i = 1000
+      val t0 = System.nanoTime
+      var matching = 0
+      while (i > 0) {
+        val key = keyGen()
+        val pct = rand.nextDouble() * 100
+        if (pct < gp) {
+          if (m.containsKey(key)) matching += 1
+        } else if (pct < gp + IterPct) {
+          // iterate
+          var n = 0
+          val iter = m.entrySet.iterator
+          while (iter.hasNext) {
+            iter.next()
+            n += 1
+          }
+          assert(n == m.size)
+        } else if (pct < 50 + (gp + IterPct) / 2) {
+          m.put(key, "abc")
+        } else {
+          m.remove(key)
+        }
+        i -= 1
+      }
+      if (matching < 0) println("unlikely")
+      val elapsed = System.nanoTime - t0
+      if (group >= 1000) best = best min elapsed
+    }
+    val total = System.currentTimeMillis - tt0
+    (best / 1000, total / 10)
   }
 }
