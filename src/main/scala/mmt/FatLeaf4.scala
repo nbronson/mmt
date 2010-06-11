@@ -6,7 +6,7 @@ import annotation.tailrec
 
 object FatLeaf4 {
 
-  def LeafMin = 1 // 8
+  def LeafMin = 8
   def LeafMax = 2 * LeafMin + 1
 
   abstract class Node[A,B](var parent: Branch[A,B])
@@ -37,11 +37,38 @@ object FatLeaf4 {
     h
   }
 
+  def newTree[@specialized A,B](implicit cmp: Ordering[A], am: ClassManifest[A], bm: ClassManifest[B]): MutableTree[A,B] = {
+    (am.newArray(0).asInstanceOf[AnyRef] match {
+      case _: Array[Unit] =>    new MutableTree[Unit,B](newEmptyRootHolder[Unit,B], 0)
+      case _: Array[Boolean] => new MutableTree[Boolean,B](newEmptyRootHolder[Boolean,B], 0)
+      case _: Array[Byte] =>    new MutableTree[Byte,B](newEmptyRootHolder[Byte,B], 0)
+      case _: Array[Short] =>   new MutableTree[Short,B](newEmptyRootHolder[Short,B], 0)
+      case _: Array[Char] =>    new MutableTree[Char,B](newEmptyRootHolder[Char,B], 0)
+      case _: Array[Int] =>     new MutableTree[Int,B](newEmptyRootHolder[Int,B], 0)
+      case _: Array[Float] =>   new MutableTree[Float,B](newEmptyRootHolder[Float,B], 0)
+      case _: Array[Long] =>    new MutableTree[Long,B](newEmptyRootHolder[Long,B], 0)
+      case _: Array[Double] =>  new MutableTree[Double,B](newEmptyRootHolder[Double,B], 0)
+      case _: Array[AnyRef] =>  new MutableTree[A,B](newEmptyRootHolder[A,B], 0)
+    }).asInstanceOf[MutableTree[A,B]]
+  }
+
   class MutableTree[@specialized A,B](val rootHolder: Branch[A,B], var _size: Int)(
           implicit cmp: Ordering[A], am: ClassManifest[A], bm: ClassManifest[B]) {
 
-    def this()(implicit cmp: Ordering[A], am: ClassManifest[A], bm: ClassManifest[B]) =
-        this(newEmptyRootHolder[A,B], 0)
+//    {
+//      println("hello?")
+//      // We'd like to fill in the rootHolder during construction (and let it be a
+//      // val), but that seems to cause specialization of the root Branch to not
+//      // occur.  Actually we don't care much about the Branch, but the Leaf it
+//      // contains should be specialized.
+//      if (rootHolder == null) {
+//        rootHolder = new Branch[A,B](null)
+//        rootHolder.right = new Leaf[A,B](rootHolder, 0)
+//      }
+//    }
+
+//    def this()(implicit cmp: Ordering[A], am: ClassManifest[A], bm: ClassManifest[B]) =
+//        this(newEmptyRootHolder[A,B], 0)
 
     //////// bulk
 
@@ -72,18 +99,22 @@ object FatLeaf4 {
       }).asInstanceOf[Nothing]
     }
 
-    def get(k: A): Option[B] = get(rootHolder.right, k)
-
-    def get(n: Node[A,B], k: A): Option[B] = n match {
-      // TODO: loopify
-      case b: Branch[A,B] => {
-        val c = cmp.compare(k, b.key)
-        if (c == 0) Some(b.value) else get(if (c < 0) b.left else b.right, k)
-      }
-      case t: Leaf[A,B] => {
-        val i = keySearch(t, k)
-        if (i >= 0) Some(t.values(i)) else None
-      }
+    def get(k: A): Option[B] = {
+      var n = rootHolder.right
+      (while (true) {
+        n match {
+          case b: Branch[A,B] => {
+            val c = cmp.compare(k, b.key)
+            if (c == 0)
+              return Some(b.value)
+            n = if (c < 0) b.left else b.right
+          }
+          case t: Leaf[A,B] => {
+            val i = keySearch(t, k)
+            return if (i >= 0) Some(t.values(i)) else None
+          }
+        }
+      }).asInstanceOf[Nothing]
     }
 
     def keySearch(t: Leaf[A,B], k: A): Int = {
@@ -105,38 +136,40 @@ object FatLeaf4 {
 
     //////// put
 
-    def put(k: A, v: B): Option[B] = put(unsharedRight(rootHolder), k, v)
+    def put(k: A, v: B): Option[B] = {
+      var n = unsharedRight(rootHolder)
+      (while (true) {
+        n match {
+          case b: Branch[A,B] => {
+            val c = cmp.compare(k, b.key)
+            if (c == 0) {
+              // update
+              val z = b.value
+              b.value = v
+              return Some(z)
+            } else {
+              n = if (c < 0) unsharedLeft(b) else unsharedRight(b)
+            }
+          }
+          case t: Leaf[A,B] => {
+            val i = keySearch(t, k)
+            if (i >= 0) {
+              val z = t.values(i)
+              t.values(i) = v
+              return Some(z)
+            } else {
+              insert(t, ~i, k, v)
+              _size += 1
+              return None
+            }
+          }
+        }
+      }).asInstanceOf[Nothing]
+    }
 
     def update(k: A, v: B) {
       put(k, v)
       // validate()
-    }
-
-    // TODO: loopify
-    def put(n: Node[A,B], k: A, v: B): Option[B] = n match {
-      case b: Branch[A,B] => {
-        val c = cmp.compare(k, b.key)
-        if (c == 0) {
-          // update
-          val z = b.value
-          b.value = v
-          Some(z)
-        } else {
-          put(if (c < 0) unsharedLeft(b) else unsharedRight(b), k, v)
-        }
-      }
-      case t: Leaf[A,B] => {
-        val i = keySearch(t, k)
-        if (i >= 0) {
-          val z = t.values(i)
-          t.values(i) = v
-          Some(z)
-        } else {
-          insert(t, ~i, k, v)
-          _size += 1
-          None
-        }
-      }
     }
 
     def insert(t: Leaf[A,B], i: Int, k: A, v: B) {
@@ -188,41 +221,42 @@ object FatLeaf4 {
 
     //////// remove
 
-    def remove(k: A): Option[B] = remove(unsharedRight(rootHolder), k)
+    def remove(k: A): Option[B] = {
+      var n = unsharedRight(rootHolder)
+      (while (true) {
+        n match {
+          case b: Branch[A,B] => {
+            val c = cmp.compare(k, b.key)
+            if (c == 0) {
+              val z = b.value
+              removeMax(b, unsharedLeft(b))
+              _size -= 1
+              return Some(z)
+            } else {
+              n = if (c < 0) unsharedLeft(b) else unsharedRight(b)
+            }
+          }
+          case t: Leaf[A,B] => {
+            val i = keySearch(t, k)
+            if (i >= 0) {
+              val z = t.values(i)
+              removeFromLeaf(t, i)
+              _size -= 1
+              return Some(z)
+            } else {
+              return None
+            }
+          }
+        }
+      }).asInstanceOf[Nothing]
+    }
 
     def -=(k: A) {
       remove(k)
       //validate()
     }
 
-    // TODO: loopify
-    def remove(n: Node[A,B], k: A): Option[B] = n match {
-      case b: Branch[A,B] => {
-        val c = cmp.compare(k, b.key)
-        if (c == 0) {
-          val z = b.value
-          removeMax(b, unsharedLeft(b))
-          _size -= 1
-          Some(z)
-        } else {
-          remove(if (c < 0) unsharedLeft(b) else unsharedRight(b), k)
-        }
-      }
-      case t: Leaf[A,B] => {
-        val i = keySearch(t, k)
-        if (i >= 0) {
-          val z = t.values(i)
-          removeFromLeaf(t, i)
-          _size -= 1
-          Some(z)
-        } else {
-          None
-        }
-      }
-    }
-
-    // TODO: loopify
-    def removeMax(target: Branch[A,B], n: Node[A,B]): Unit = n match {
+    @tailrec private def removeMax(target: Branch[A,B], n: Node[A,B]): Unit = n match {
       case b: Branch[A,B] => {
         removeMax(target, unsharedRight(b))
       }
@@ -563,33 +597,26 @@ object FatLeaf4 {
 //  }
 
   def main(args: Array[String]) {
-    for (n <- 5 until 100) {
-      val t = new MutableTree[Int,String]
-      for (i <- 0 until n) t(i) = "x"+i
-      for (i <- 0 until n) 
-        t -= i
-    }
-
     val rands = Array.tabulate(6) { _ => new scala.util.Random(0) }
-    for (pass <- 0 until 10) {
+    for (pass <- 0 until 0) {
       testInt(rands(0))
     }
     println("------------- adding short")
-    for (pass <- 0 until 10) {
+    for (pass <- 0 until 0) {
       testInt(rands(1))
       testShort(rands(2))
     }
-    println("------------- adding long")
+    println("------------- adding custom")
     for (pass <- 0 until 10) {
       testInt(rands(3))
       testShort(rands(4))
-      testLong(rands(5))
+      testCustom(rands(5))
     }
   }
 
-  def Range = 100000
+  def Range = 10000
   def InitialGetPct = 50
-  def GetPct = 100 // 70 //95
+  def GetPct = 70 // 70 //95
   def IterPct = 1.0 / Range
 
   def testInt(rand: scala.util.Random) = {
@@ -600,8 +627,16 @@ object FatLeaf4 {
     test[Short]("Short", rand, () => rand.nextInt(Range).asInstanceOf[Short])
   }
 
-  def testLong(rand: scala.util.Random) = {
-    test[Long](" Long", rand, () => rand.nextInt(Range).asInstanceOf[Long])
+  case class Custom(v: Int)
+
+  implicit object CustomCmp extends Ordering[Custom] {
+    def compare(x: Custom, y: Custom): Int = {
+      if (x.v < y.v) -1 else if (x.v == y.v) 0 else 1
+    }
+  }
+
+  def testCustom(rand: scala.util.Random) = {
+    test[Custom](" Custom", rand, () => Custom(rand.nextInt(Range)))
   }
 
   def test[A](name: String, rand: scala.util.Random, keyGen: () => A)(
@@ -627,7 +662,7 @@ object FatLeaf4 {
   def testFatLeaf4[A](rand: scala.util.Random, keyGen: () => A)(
           implicit cmp: Ordering[A], am: ClassManifest[A]): (Long,Long) = {
     val tt0 = System.currentTimeMillis
-    val m = new FatLeaf4.MutableTree[A,String]
+    val m = FatLeaf4.newTree[A,String]
     var best = Long.MaxValue
     for (group <- 1 until 10000) {
       val gp = if (group < 1000) InitialGetPct else GetPct
