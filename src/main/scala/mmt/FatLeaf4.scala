@@ -6,7 +6,32 @@ import annotation.tailrec
 
 object FatLeaf4 {
 
-  def LeafMin = 1 // TODO: 15
+  trait MyCmp[@specialized A] { def compare(k1: A, k2: A): Int }
+  object MyCmpByte extends MyCmp[Byte] { def compare(k1: Byte, k2: Byte) = if (k1 < k2) -1 else if (k1 > k2) 1 else 0 }
+  object MyCmpShort extends MyCmp[Short] { def compare(k1: Short, k2: Short) = if (k1 < k2) -1 else if (k1 > k2) 1 else 0 }
+  object MyCmpChar extends MyCmp[Char] { def compare(k1: Char, k2: Char) = if (k1 < k2) -1 else if (k1 > k2) 1 else 0 }
+  object MyCmpInt extends MyCmp[Int] { def compare(k1: Int, k2: Int) = if (k1 < k2) -1 else if (k1 > k2) 1 else 0 }
+  object MyCmpFloat extends MyCmp[Float] { def compare(k1: Float, k2: Float) = if (k1 < k2) -1 else if (k1 > k2) 1 else 0 }
+  object MyCmpLong extends MyCmp[Long] { def compare(k1: Long, k2: Long) = if (k1 < k2) -1 else if (k1 > k2) 1 else 0 }
+  object MyCmpDouble extends MyCmp[Double] { def compare(k1: Double, k2: Double) = if (k1 < k2) -1 else if (k1 > k2) 1 else 0 }
+  class MyCmpGeneric[@specialized A](cmp: Ordering[A]) extends MyCmp[A] { def compare(k1: A, k2: A) = cmp.compare(k1, k2) }
+
+  implicit def specCmp[@specialized A](implicit cmp: Ordering[A]): MyCmp[A] = {
+    (cmp.asInstanceOf[AnyRef] match {
+      case Ordering.Byte => MyCmpByte
+      case Ordering.Short => MyCmpShort
+      case Ordering.Char => MyCmpChar
+      case Ordering.Int => MyCmpInt
+      case Ordering.Float => MyCmpFloat
+      case Ordering.Long => MyCmpLong
+      case Ordering.Double => MyCmpDouble
+      case _ => new MyCmpGeneric(cmp)
+    }).asInstanceOf[MyCmp[A]]
+  }
+
+  ////////
+
+  def LeafMin = 15
   def LeafMax = 2 * LeafMin + 1
 
   abstract class Node[A,B](var parent: Branch[A,B])
@@ -53,7 +78,7 @@ object FatLeaf4 {
   }
 
   class MutableTree[@specialized A,B](val rootHolder: Branch[A,B], var _size: Int)(
-          implicit cmp: Ordering[A], am: ClassManifest[A], bm: ClassManifest[B]) {
+          implicit cmp: MyCmp[A], am: ClassManifest[A], bm: ClassManifest[B]) {
 
 //    {
 //      println("hello?")
@@ -614,9 +639,9 @@ object FatLeaf4 {
     }
   }
 
-  def Range = 1000
+  def Range = 10000
   def InitialGetPct = 50
-  def GetPct = 70 // 70 //95
+  def GetPct = 50 // 70 //95
   def IterPct = 1.0 / Range
 
   def testInt(rand: scala.util.Random) = {
