@@ -5,18 +5,22 @@ import java.util.NoSuchElementException
 
 // BTree2
 
+object BTree2NotFound
+
 object BTree2 {
+  import mmt.{BTree2NotFound => NotFound}
+
   // try 1 for testing
   def MinKeys = 8
   def MaxKeys = 2 * MinKeys + 1
 
-  final class Node[A,B](var generation: Long, // TODO: replace with Int + rollover logic
-                        var numKeys: Int,     // TODO: replace with Short
-                        var keysShared: Boolean,
-                        var valuesShared: Boolean,
-                        var keys: Array[A],
-                        var values: Array[B],
-                        var children: Array[Node[A,B]]) {
+  class Node[@specialized A,B](var generation: Long, // TODO: replace with Int + rollover logic
+                               var numKeys: Int,     // TODO: replace with Short
+                               var keysShared: Boolean,
+                               var valuesShared: Boolean,
+                               var keys: Array[A],
+                               var values: Array[B],
+                               var children: Array[Node[A,B]]) {
 
     //////// read
 
@@ -37,19 +41,24 @@ object BTree2 {
       return ~b
     }
 
-    @tailrec def contains(k: A)(implicit cmp: Ordering[A]): Boolean = {
-      val i = keySearch(k)
-      i >= 0 || (children != null && children(~i).contains(k))
+    def contains(k: A)(implicit cmp: Ordering[A]): Boolean = {
+      var n = this
+      (while (true) {
+        val i = n.keySearch(k)
+        if (i >= 0) return true
+        if (n.children == null) return false
+        n = n.children(~i)
+      }).asInstanceOf[Nothing]
     }
 
-    @tailrec def get(k: A)(implicit cmp: Ordering[A]): Option[B] = {
-      val i = keySearch(k)
-      if (i >= 0)
-        Some(values(i))
-      else if (children == null)
-        None
-      else
-        children(~i).get(k)
+    def get(k: A)(implicit cmp: Ordering[A]): Option[B] = {
+      var n = this
+      (while (true) {
+        val i = n.keySearch(k)
+        if (i >= 0) return Some(values(i))
+        if (n.children == null) return None
+        n = n.children(~i)
+      }).asInstanceOf[Nothing]
     }
 
     //////// sharing machinery
@@ -96,44 +105,49 @@ object BTree2 {
 
     //////// update and insert
 
-    def put(k: A, v: B)(implicit cmp: Ordering[A]): Option[B] = put(0, numKeys, k, v)
-
-    @tailrec def put(b: Int, e: Int, k: A, v: B)(implicit cmp: Ordering[A]): Option[B] = {
-      if (b < e) {
-        // keep binary searching in this node
-        val mid = (b + e) >>> 1
-        val c = cmp.compare(k, keys(mid))
-        if (c < 0) {
-          put(b, mid, k, v)
-        } else if (c > 0) {
-          put(mid + 1, e, k, v)
+    def put(k: A, v: B)(implicit cmp: Ordering[A]): AnyRef = {
+      var n = this
+      var b = 0
+      var e = numKeys
+      (while (true) {
+        if (b < e) {
+          // keep binary searching in this node
+          val mid = (b + e) >>> 1
+          val c = cmp.compare(k, n.keys(mid))
+          if (c < 0) {
+            e = mid
+          } else if (c > 0) {
+            b = mid + 1
+          } else {
+            // hit, update
+            val z = n.values(mid)
+            n.unsharedValues(mid) = v
+            return z.asInstanceOf[AnyRef]
+          }
+        } else if (n.children == null) {
+          // this is a leaf, insert here
+          n.insertEntry(b, k, v)
+          return NotFound
         } else {
-          // hit, update
-          val z = values(mid)
-          unsharedValues(mid) = v
-          Some(z)
+          // not found in this node, move down
+          val ch = n.unsharedChild(b)
+          if (ch.numKeys == MaxKeys) {
+            // Split the child first.  We then need to decide whether to go to
+            // the left or the right of the resulting split, or possibly stay at
+            // this node (because one key moves to this level during the split).
+            n.splitChild(k, b)
+            e = b + 1
+          } else {
+            // just move down
+            n = ch
+            b = 0
+            e = n.numKeys
+          }
         }
-      } else if (children == null) {
-        // this is a leaf, insert here
-        insertEntry(b, k, v)
-        None
-      } else {
-        // not found in this node, move down
-        val ch = unsharedChild(b)
-        if (ch.numKeys == MaxKeys) {
-          // Split the child first.  We then need to decide whether to go to
-          // the left or the right of the resulting split, or possibly stay at
-          // this node (because one key moves to this level during the split).
-          splitChild(b)
-          put(b, b + 1, k, v)
-        } else {
-          // just move down
-          ch.put(0, ch.numKeys, k, v)
-        }
-      }
+      }).asInstanceOf[Nothing]
     }
 
-    def splitChild(i: Int) {
+    def splitChild(dummy: A, i: Int) {
       val lhs = children(i)
       assert(lhs.numKeys == MaxKeys && lhs.generation == generation)
 
@@ -194,7 +208,7 @@ object BTree2 {
 
     //////// removal
 
-    def remove(k: A)(implicit cmp: Ordering[A]): Option[B] = {
+    def remove(k: A)(implicit cmp: Ordering[A]): AnyRef = {
       // Pre-splitting during put is not too hard, but we can't pre-join.  This
       // means that put is tail recursive, but not remove.
       val i = keySearch(k)
@@ -205,10 +219,10 @@ object BTree2 {
           leafRemove(i)
         else
           branchRemove(i)
-        Some(z)
+        z.asInstanceOf[AnyRef]
       } else if (children == null) {
         // miss
-        None
+        NotFound
       } else {
         // recurse
         val z = unsharedChild(~i).remove(k)
@@ -373,11 +387,27 @@ object BTree2 {
     }
   }
 
-  def newEmptyRoot[A,B](gen: Long)(implicit am: ClassManifest[A], bm: ClassManifest[B]) =
+  def newEmptyRoot[@specialized A,B](gen: Long)(implicit am: ClassManifest[A], bm: ClassManifest[B]) =
       new Node[A,B](gen, 0, false, false, new Array[A](MaxKeys), new Array[B](MaxKeys), null)
 
-  abstract class Base[A,B](var root: BTree2.Node[A,B], var _size: Int)(implicit cmp: Ordering[A]) {
+  def newTree[@specialized A,B](implicit cmp: Ordering[A], am: ClassManifest[A], bm: ClassManifest[B]): MutableTree[A,B] = {
+    (am.newArray(0).asInstanceOf[AnyRef] match {
+      case _: Array[Unit] =>    new MutableTree[Unit,B](newEmptyRoot[Unit,B](0L), 0)
+      case _: Array[Boolean] => new MutableTree[Boolean,B](newEmptyRoot[Boolean,B](0L), 0)
+      case _: Array[Byte] =>    new MutableTree[Byte,B](newEmptyRoot[Byte,B](0L), 0)
+      case _: Array[Short] =>   new MutableTree[Short,B](newEmptyRoot[Short,B](0L), 0)
+      case _: Array[Char] =>    new MutableTree[Char,B](newEmptyRoot[Char,B](0L), 0)
+      case _: Array[Int] =>     new MutableTree[Int,B](newEmptyRoot[Int,B](0L), 0)
+      case _: Array[Float] =>   new MutableTree[Float,B](newEmptyRoot[Float,B](0L), 0)
+      case _: Array[Long] =>    new MutableTree[Long,B](newEmptyRoot[Long,B](0L), 0)
+      case _: Array[Double] =>  new MutableTree[Double,B](newEmptyRoot[Double,B](0L), 0)
+      case _: Array[AnyRef] =>  new MutableTree[A,B](newEmptyRoot[A,B](0L), 0)
+    }).asInstanceOf[MutableTree[A,B]]
+  }
 
+  class MutableTree[@specialized A,B](var root: BTree2.Node[A,B], var _size: Int)(
+          implicit cmp: Ordering[A], am: ClassManifest[A], bm: ClassManifest[B]) {
+    
     def isEmpty = _size == 0
     def size = _size
 
@@ -448,34 +478,32 @@ object BTree2 {
       }
       assert(_size == elements.toSeq.size)
     }
-  }
-
-  class MutableTree[A,B](root0: BTree2.Node[A,B], size0: Int)(
-          implicit cmp: Ordering[A], am: ClassManifest[A], bm: ClassManifest[B]) extends Base[A,B](root0, size0) {
-    def this()(implicit cmp: Ordering[A], am: ClassManifest[A], bm: ClassManifest[B]) =
-        this(newEmptyRoot[A,B](0L), 0)
 
     override def clone() = new MutableTree[A,B](root.copyForClone(), _size)
 
-    def -=(k: A) { remove(k) }
-    def update(k: A, v: B) { put(k, v) }
-
     def put(k: A, v: B): Option[B] = {
+      val z = putImpl(k, v)
+      if (z eq NotFound) None else Some(z.asInstanceOf[B])
+    }
+
+    def update(k: A, v: B) { putImpl(k, v) }
+
+    def putImpl(k: A, v: B): AnyRef = {
       val z = root.put(k, v)
       if (root.numKeys == MaxKeys)
-        splitRoot()
-      if (z.isEmpty)
+        splitRoot(k)
+      if (z eq NotFound)
         _size += 1
       //validate()
       z
     }
 
-    def splitRoot() {
-      pushDownRoot()
-      root.splitChild(0)
+    def splitRoot(dummy: A) {
+      pushDownRoot(dummy)
+      root.splitChild(dummy, 0)
     }
 
-    def pushDownRoot() {
+    def pushDownRoot(k: A) {
       val r = newEmptyRoot[A,B](root.generation)
       r.children = new Array[Node[A,B]](MaxKeys + 1)
       r.children(0) = root
@@ -483,14 +511,22 @@ object BTree2 {
     }
 
     def remove(k: A): Option[B] = {
+      val z = removeImpl(k)
+      if (z eq NotFound) None else Some(z.asInstanceOf[B])
+    }
+
+    def -=(k: A) { removeImpl(k) }
+
+    def removeImpl(k: A): AnyRef = {
       val z = root.remove(k)
       if (root.numKeys == 0 && root.children != null)
         root = root.unsharedChild(0)
-      if (!z.isEmpty)
+      if (z ne NotFound)
         _size -= 1
       //validate()
       z
     }
+
   }
 
   var cmpCount = 0
@@ -537,7 +573,7 @@ object BTree2 {
     test[Long](" Long", rand, () => rand.nextInt(Range).asInstanceOf[Long])
   }
 
-  def test[A](name: String, rand: scala.util.Random, keyGen: () => A)(implicit cmp: Ordering[A], am: ClassManifest[A]) {
+  def test[@specialized A](name: String, rand: scala.util.Random, keyGen: () => A)(implicit cmp: Ordering[A], am: ClassManifest[A]) {
     cmpCount = 0
     val (abest,aavg) = testBTree2(rand, keyGen)
     val ac = cmpCount
@@ -555,9 +591,9 @@ object BTree2 {
       println("  BTree2: " + ac + " compares,  FatLeaf: " + bc + " compares,  java.util.TreeMap: " + cc + " compares")
   }
 
-  def testBTree2[A](rand: scala.util.Random, keyGen: () => A)(implicit cmp: Ordering[A], am: ClassManifest[A]): (Long,Long) = {
+  def testBTree2[@specialized A](rand: scala.util.Random, keyGen: () => A)(implicit cmp: Ordering[A], am: ClassManifest[A]): (Long,Long) = {
     val tt0 = System.currentTimeMillis
-    val m = new MutableTree[A,String]
+    val m = newTree[A,String]
     var best = Long.MaxValue
     for (group <- 1 until 10000) {
       val gp = if (group < 1000) InitialGetPct else GetPct
@@ -590,7 +626,7 @@ object BTree2 {
     (best / 1000, total / 10)
   }
 
-  def testFatLeaf[A](rand: scala.util.Random, keyGen: () => A)(implicit cmp: Ordering[A]): (Long,Long) = {
+  def testFatLeaf[@specialized A](rand: scala.util.Random, keyGen: () => A)(implicit cmp: Ordering[A]): (Long,Long) = {
     val tt0 = System.currentTimeMillis
     val m = new FatLeaf.MutableTree[A,String]
     var best = Long.MaxValue
@@ -625,7 +661,7 @@ object BTree2 {
     (best / 1000, total / 10)
   }
 
-  def testJavaTree[A](rand: scala.util.Random, keyGen: () => A)(implicit cmp: Ordering[A]): (Long,Long) = {
+  def testJavaTree[@specialized A](rand: scala.util.Random, keyGen: () => A)(implicit cmp: Ordering[A]): (Long,Long) = {
     val tt0 = System.currentTimeMillis
     val m = new java.util.TreeMap[A,String](cmp)
     var best = Long.MaxValue
