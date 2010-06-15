@@ -630,7 +630,7 @@ object FatLeaf5 {
               " compares,  java.util.TreeMap: " + cc + " compares")
   }
 
-  def testFatLeaf5[A](rand: scala.util.Random, keyGen: () => A)(
+  def testFatLeaf5[@specialized A](rand: scala.util.Random, keyGen: () => A)(
           implicit cmp: Ordering[A], am: ClassManifest[A]): (Long,Long) = {
     val tt0 = System.currentTimeMillis
     val m = FatLeaf5.newTree[A,String]
@@ -666,7 +666,7 @@ object FatLeaf5 {
     (best / 1000, total / 10)
   }
 
-  def testFatLeaf[A](rand: scala.util.Random, keyGen: () => A)(implicit cmp: Ordering[A]): (Long,Long) = {
+  def testFatLeaf[@specialized A](rand: scala.util.Random, keyGen: () => A)(implicit cmp: Ordering[A]): (Long,Long) = {
     val tt0 = System.currentTimeMillis
     val m = new FatLeaf.MutableTree[A,String]
     var best = Long.MaxValue
@@ -701,7 +701,7 @@ object FatLeaf5 {
     (best / 1000, total / 10)
   }
 
-  def testJavaTree[A](rand: scala.util.Random, keyGen: () => A)(implicit cmp: Ordering[A]): (Long,Long) = {
+  def testJavaTree[@specialized A](rand: scala.util.Random, keyGen: () => A)(implicit cmp: Ordering[A]): (Long,Long) = {
     val tt0 = System.currentTimeMillis
     val m = new java.util.TreeMap[A,String](cmp)
     var best = Long.MaxValue

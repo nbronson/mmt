@@ -6,7 +6,7 @@ import annotation.tailrec
 
 object FatLeaf4 {
 
-  def LeafMin = 15
+  def LeafMin = 1 // TODO: 15
   def LeafMax = 2 * LeafMin + 1
 
   abstract class Node[A,B](var parent: Branch[A,B])
@@ -616,7 +616,7 @@ object FatLeaf4 {
 
   def Range = 1000
   def InitialGetPct = 50
-  def GetPct = 50 // 70 //95
+  def GetPct = 70 // 70 //95
   def IterPct = 1.0 / Range
 
   def testInt(rand: scala.util.Random) = {
@@ -639,7 +639,7 @@ object FatLeaf4 {
     test[Custom](" Custom", rand, () => Custom(rand.nextInt(Range)))
   }
 
-  def test[A](name: String, rand: scala.util.Random, keyGen: () => A)(
+  def test[@specialized A](name: String, rand: scala.util.Random, keyGen: () => A)(
           implicit cmp: Ordering[A], am: ClassManifest[A]) {
     cmpCount = 0
     val (abest,aavg) = testFatLeaf(rand, keyGen)
@@ -659,7 +659,7 @@ object FatLeaf4 {
               " compares,  java.util.TreeMap: " + cc + " compares")
   }
 
-  def testFatLeaf4[A](rand: scala.util.Random, keyGen: () => A)(
+  def testFatLeaf4[@specialized A](rand: scala.util.Random, keyGen: () => A)(
           implicit cmp: Ordering[A], am: ClassManifest[A]): (Long,Long) = {
     val tt0 = System.currentTimeMillis
     val m = FatLeaf4.newTree[A,String]
@@ -695,7 +695,7 @@ object FatLeaf4 {
     (best / 1000, total / 10)
   }
 
-  def testFatLeaf[A](rand: scala.util.Random, keyGen: () => A)(implicit cmp: Ordering[A]): (Long,Long) = {
+  def testFatLeaf[@specialized A](rand: scala.util.Random, keyGen: () => A)(implicit cmp: Ordering[A]): (Long,Long) = {
     val tt0 = System.currentTimeMillis
     val m = new FatLeaf.MutableTree[A,String]
     var best = Long.MaxValue
@@ -730,7 +730,7 @@ object FatLeaf4 {
     (best / 1000, total / 10)
   }
 
-  def testJavaTree[A](rand: scala.util.Random, keyGen: () => A)(implicit cmp: Ordering[A]): (Long,Long) = {
+  def testJavaTree[@specialized A](rand: scala.util.Random, keyGen: () => A)(implicit cmp: Ordering[A]): (Long,Long) = {
     val tt0 = System.currentTimeMillis
     val m = new java.util.TreeMap[A,String](cmp)
     var best = Long.MaxValue
