@@ -6,6 +6,31 @@ import annotation.tailrec
 
 object FatLeaf5 {
 
+  trait MyCmp[@specialized A] { def compare(k1: A, k2: A): Int }
+  object MyCmpByte extends MyCmp[Byte] { def compare(k1: Byte, k2: Byte) = if (k1 < k2) -1 else if (k1 > k2) 1 else 0 }
+  object MyCmpShort extends MyCmp[Short] { def compare(k1: Short, k2: Short) = if (k1 < k2) -1 else if (k1 > k2) 1 else 0 }
+  object MyCmpChar extends MyCmp[Char] { def compare(k1: Char, k2: Char) = if (k1 < k2) -1 else if (k1 > k2) 1 else 0 }
+  object MyCmpInt extends MyCmp[Int] { def compare(k1: Int, k2: Int) = if (k1 < k2) -1 else if (k1 > k2) 1 else 0 }
+  object MyCmpFloat extends MyCmp[Float] { def compare(k1: Float, k2: Float) = if (k1 < k2) -1 else if (k1 > k2) 1 else 0 }
+  object MyCmpLong extends MyCmp[Long] { def compare(k1: Long, k2: Long) = if (k1 < k2) -1 else if (k1 > k2) 1 else 0 }
+  object MyCmpDouble extends MyCmp[Double] { def compare(k1: Double, k2: Double) = if (k1 < k2) -1 else if (k1 > k2) 1 else 0 }
+  class MyCmpGeneric[@specialized A](cmp: Ordering[A]) extends MyCmp[A] { def compare(k1: A, k2: A) = cmp.compare(k1, k2) }
+
+  implicit def specCmp[@specialized A](implicit cmp: Ordering[A]): MyCmp[A] = {
+    (cmp.asInstanceOf[AnyRef] match {
+      case Ordering.Byte => MyCmpByte
+      case Ordering.Short => MyCmpShort
+      case Ordering.Char => MyCmpChar
+      case Ordering.Int => MyCmpInt
+      case Ordering.Float => MyCmpFloat
+      case Ordering.Long => MyCmpLong
+      case Ordering.Double => MyCmpDouble
+      case _ => new MyCmpGeneric(cmp)
+    }).asInstanceOf[MyCmp[A]]
+  }
+
+  ////////
+
   def LeafMin = 15
   def LeafMax = 2 * LeafMin + 1
 
@@ -30,21 +55,48 @@ object FatLeaf5 {
 
   def newTree[@specialized A,B](implicit cmp: Ordering[A], am: ClassManifest[A], bm: ClassManifest[B]): MutableTree[A,B] = {
     (am.newArray(0).asInstanceOf[AnyRef] match {
-      case _: Array[Unit] =>    new MutableTree[Unit,B](newEmptyRootHolder[Unit,B], 0)
-      case _: Array[Boolean] => new MutableTree[Boolean,B](newEmptyRootHolder[Boolean,B], 0)
-      case _: Array[Byte] =>    new MutableTree[Byte,B](newEmptyRootHolder[Byte,B], 0)
-      case _: Array[Short] =>   new MutableTree[Short,B](newEmptyRootHolder[Short,B], 0)
-      case _: Array[Char] =>    new MutableTree[Char,B](newEmptyRootHolder[Char,B], 0)
-      case _: Array[Int] =>     new MutableTree[Int,B](newEmptyRootHolder[Int,B], 0)
-      case _: Array[Float] =>   new MutableTree[Float,B](newEmptyRootHolder[Float,B], 0)
-      case _: Array[Long] =>    new MutableTree[Long,B](newEmptyRootHolder[Long,B], 0)
-      case _: Array[Double] =>  new MutableTree[Double,B](newEmptyRootHolder[Double,B], 0)
-      case _: Array[AnyRef] =>  new MutableTree[A,B](newEmptyRootHolder[A,B], 0)
+      case _: Array[Unit] => {
+        implicit val cmp0 = cmp.asInstanceOf[Ordering[Unit]]
+        new MutableTree[Unit,B](newEmptyRootHolder[Unit,B], 0)
+      }
+      case _: Array[Boolean] => {
+        implicit val cmp0 = cmp.asInstanceOf[Ordering[Boolean]]
+        new MutableTree[Boolean,B](newEmptyRootHolder[Boolean,B], 0)
+      }
+      case _: Array[Byte] => {
+        implicit val cmp0 = cmp.asInstanceOf[Ordering[Byte]]
+        new MutableTree[Byte,B](newEmptyRootHolder[Byte,B], 0)
+      }
+      case _: Array[Short] => {
+        implicit val cmp0 = cmp.asInstanceOf[Ordering[Short]]
+        new MutableTree[Short,B](newEmptyRootHolder[Short,B], 0)
+      }
+      case _: Array[Char] => {
+        implicit val cmp0 = cmp.asInstanceOf[Ordering[Char]]
+        new MutableTree[Char,B](newEmptyRootHolder[Char,B], 0)
+      }
+      case _: Array[Int] => {
+        implicit val cmp0 = cmp.asInstanceOf[Ordering[Int]]
+        new MutableTree[Int,B](newEmptyRootHolder[Int,B], 0)
+      }
+      case _: Array[Float] => {
+        implicit val cmp0 = cmp.asInstanceOf[Ordering[Float]]
+        new MutableTree[Float,B](newEmptyRootHolder[Float,B], 0)
+      }
+      case _: Array[Long] => {
+        implicit val cmp0 = cmp.asInstanceOf[Ordering[Long]]
+        new MutableTree[Long,B](newEmptyRootHolder[Long,B], 0)
+      }
+      case _: Array[Double] => {
+        implicit val cmp0 = cmp.asInstanceOf[Ordering[Double]]
+        new MutableTree[Double,B](newEmptyRootHolder[Double,B], 0)
+      }
+      case _: Array[AnyRef] => new MutableTree[A,B](newEmptyRootHolder[A,B], 0)
     }).asInstanceOf[MutableTree[A,B]]
   }
 
   class MutableTree[@specialized A,B](val rootHolder: Node[A,B], var _size: Int)(
-          implicit cmp: Ordering[A], am: ClassManifest[A], bm: ClassManifest[B]) {
+          implicit cmp: MyCmp[A], am: ClassManifest[A], bm: ClassManifest[B]) {
 
 //    {
 //      println("hello?")
@@ -610,10 +662,10 @@ object FatLeaf5 {
     test[Custom](" Custom", rand, () => Custom(rand.nextInt(Range)))
   }
 
-  def test[A](name: String, rand: scala.util.Random, keyGen: () => A)(
+  def test[@specialized A](name: String, rand: scala.util.Random, keyGen: () => A)(
           implicit cmp: Ordering[A], am: ClassManifest[A]) {
     cmpCount = 0
-    val (abest,aavg) = testFatLeaf(rand, keyGen)
+    val (abest,aavg) = testFatLeaf4(rand, keyGen)
     val ac = cmpCount
     //println("!!")
     cmpCount = 0
@@ -622,11 +674,11 @@ object FatLeaf5 {
     cmpCount = 0
     val (cbest,cavg) = testJavaTree(rand, keyGen)
     val cc = cmpCount
-    println(name + ": FatLeaf: " + abest + " nanos/op (" + aavg + " avg),  " +
+    println(name + ": FatLeaf4: " + abest + " nanos/op (" + aavg + " avg),  " +
             name + ": FatLeaf5: " + bbest + " nanos/op (" + bavg + " avg),  " +
             "java.util.TreeMap: " + cbest + " nanos/op (" + cavg + " avg)")
     if (ac > 0)
-      println("  FatLeaf: " + ac + " compares,  FatLeaf5: " + bc +
+      println("  FatLeaf4: " + ac + " compares,  FatLeaf5: " + bc +
               " compares,  java.util.TreeMap: " + cc + " compares")
   }
 
@@ -666,9 +718,10 @@ object FatLeaf5 {
     (best / 1000, total / 10)
   }
 
-  def testFatLeaf[@specialized A](rand: scala.util.Random, keyGen: () => A)(implicit cmp: Ordering[A]): (Long,Long) = {
+  def testFatLeaf4[@specialized A](rand: scala.util.Random, keyGen: () => A)(
+          implicit cmp: Ordering[A], am: ClassManifest[A]): (Long,Long) = {
     val tt0 = System.currentTimeMillis
-    val m = new FatLeaf.MutableTree[A,String]
+    val m = FatLeaf4.newTree[A,String]
     var best = Long.MaxValue
     for (group <- 1 until 10000) {
       val gp = if (group < 1000) InitialGetPct else GetPct

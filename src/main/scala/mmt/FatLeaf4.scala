@@ -64,16 +64,43 @@ object FatLeaf4 {
 
   def newTree[@specialized A,B](implicit cmp: Ordering[A], am: ClassManifest[A], bm: ClassManifest[B]): MutableTree[A,B] = {
     (am.newArray(0).asInstanceOf[AnyRef] match {
-      case _: Array[Unit] =>    new MutableTree[Unit,B](newEmptyRootHolder[Unit,B], 0)
-      case _: Array[Boolean] => new MutableTree[Boolean,B](newEmptyRootHolder[Boolean,B], 0)
-      case _: Array[Byte] =>    new MutableTree[Byte,B](newEmptyRootHolder[Byte,B], 0)
-      case _: Array[Short] =>   new MutableTree[Short,B](newEmptyRootHolder[Short,B], 0)
-      case _: Array[Char] =>    new MutableTree[Char,B](newEmptyRootHolder[Char,B], 0)
-      case _: Array[Int] =>     new MutableTree[Int,B](newEmptyRootHolder[Int,B], 0)
-      case _: Array[Float] =>   new MutableTree[Float,B](newEmptyRootHolder[Float,B], 0)
-      case _: Array[Long] =>    new MutableTree[Long,B](newEmptyRootHolder[Long,B], 0)
-      case _: Array[Double] =>  new MutableTree[Double,B](newEmptyRootHolder[Double,B], 0)
-      case _: Array[AnyRef] =>  new MutableTree[A,B](newEmptyRootHolder[A,B], 0)
+      case _: Array[Unit] => {
+        implicit val cmp0 = cmp.asInstanceOf[Ordering[Unit]]
+        new MutableTree[Unit,B](newEmptyRootHolder[Unit,B], 0)
+      }
+      case _: Array[Boolean] => {
+        implicit val cmp0 = cmp.asInstanceOf[Ordering[Boolean]]
+        new MutableTree[Boolean,B](newEmptyRootHolder[Boolean,B], 0)
+      }
+      case _: Array[Byte] => {
+        implicit val cmp0 = cmp.asInstanceOf[Ordering[Byte]]
+        new MutableTree[Byte,B](newEmptyRootHolder[Byte,B], 0)
+      }
+      case _: Array[Short] => {
+        implicit val cmp0 = cmp.asInstanceOf[Ordering[Short]]
+        new MutableTree[Short,B](newEmptyRootHolder[Short,B], 0)
+      }
+      case _: Array[Char] => {
+        implicit val cmp0 = cmp.asInstanceOf[Ordering[Char]]
+        new MutableTree[Char,B](newEmptyRootHolder[Char,B], 0)
+      }
+      case _: Array[Int] => {
+        implicit val cmp0 = cmp.asInstanceOf[Ordering[Int]]
+        new MutableTree[Int,B](newEmptyRootHolder[Int,B], 0)
+      }
+      case _: Array[Float] => {
+        implicit val cmp0 = cmp.asInstanceOf[Ordering[Float]]
+        new MutableTree[Float,B](newEmptyRootHolder[Float,B], 0)
+      }
+      case _: Array[Long] => {
+        implicit val cmp0 = cmp.asInstanceOf[Ordering[Long]]
+        new MutableTree[Long,B](newEmptyRootHolder[Long,B], 0)
+      }
+      case _: Array[Double] => {
+        implicit val cmp0 = cmp.asInstanceOf[Ordering[Double]]
+        new MutableTree[Double,B](newEmptyRootHolder[Double,B], 0)
+      }
+      case _: Array[AnyRef] => new MutableTree[A,B](newEmptyRootHolder[A,B], 0)
     }).asInstanceOf[MutableTree[A,B]]
   }
 
@@ -218,12 +245,13 @@ object FatLeaf4 {
 
       // existing terminal becomes left leaf, create new branch
       val b = new Branch[A,B](tL.parent, 2, tL.keys(leftSize), tL.values(leftSize), tL, null)
-      val tR = new Leaf[A,B](b, rightSize)
+      val tR = new Leaf[A,B](b, rightSize, tL.keys.clone(), tL.values.clone())
       b.right = tR
 
       // copy to right
       System.arraycopy(tL.keys, leftSize + 1, tR.keys, 0, rightSize)
       System.arraycopy(tL.values, leftSize + 1, tR.values, 0, rightSize)
+      clear(tL, rightSize, LeafMax - rightSize)
 
       // fix up left
       tL.parent = b
