@@ -241,9 +241,9 @@ object BTree2 {
         // hit
         val z = values(i)
         if (children == null)
-          leafRemove(i)
+          leafRemove(k, i)
         else
-          branchRemove(i)
+          branchRemove(k, i)
         z.asInstanceOf[AnyRef]
       } else if (children == null) {
         // miss
@@ -251,64 +251,64 @@ object BTree2 {
       } else {
         // recurse
         val z = unsharedChild(~i).remove(k)
-        checkJoin(~i)
+        checkJoin(k, ~i)
         z
       }
     }
 
-    def branchRemove(i: Int) {
-      unsharedChild(i).removeMax(this, i)
-      checkJoin(i)
+    def branchRemove(dummy: A, i: Int) {
+      unsharedChild(i).removeMax(dummy, this, i)
+      checkJoin(dummy, i)
     }
 
-    def removeMax(target: Node[A,B], targetI: Int) {
+    def removeMax(dummy: A, target: Node[A,B], targetI: Int) {
       if (children == null) {
         target.unsharedKeys(targetI) = keys(numKeys - 1)
         target.unsharedValues(targetI) = values(numKeys - 1)
-        leafTrimMax()
+        leafTrimMax(dummy)
       } else {
-        unsharedChild(numKeys).removeMax(target, targetI)
-        checkJoin(numKeys)
+        unsharedChild(numKeys).removeMax(dummy, target, targetI)
+        checkJoin(dummy, numKeys)
       }
     }
 
-    def leafRemove(i: Int) {
+    def leafRemove(dummy: A, i: Int) {
       val kk = unsharedKeys
       val vv = unsharedValues
       System.arraycopy(kk, i + 1, kk, i, numKeys - i - 1)
       System.arraycopy(vv, i + 1, vv, i, numKeys - i - 1)
-      leafTrimMax()
+      leafTrimMax(dummy)
     }
 
-    def leafTrimMax() {
+    def leafTrimMax(dummy: A) {
       unsharedKeys(numKeys - 1) = null.asInstanceOf[A]
       unsharedValues(numKeys - 1) = null.asInstanceOf[B]
       numKeys -= 1
     }
 
-    def checkJoin(i: Int) {
+    def checkJoin(dummy: A, i: Int) {
       if (children(i).numKeys < MinKeys && numKeys > 0)
-        refillChild(i)
+        refillChild(dummy, i)
     }
 
-    def refillChild(i: Int) {
+    def refillChild(dummy: A, i: Int) {
       // we either need to steal an entry, or merge with a sibling
       if (i > 0) {
         // possible merge or steal with left sibling
         if (children(i - 1).numKeys == MinKeys)
-          joinChildren(i - 1)
+          joinChildren(dummy, i - 1)
         else
-          shuffleRight(i - 1)
+          shuffleRight(dummy, i - 1)
       } else {
         // consider only right sibling
         if (children(i + 1).numKeys == MinKeys)
-          joinChildren(i)
+          joinChildren(dummy, i)
         else
-          shuffleLeft(i)
+          shuffleLeft(dummy, i)
       }
     }
 
-    def joinChildren(i: Int) {
+    def joinChildren(dummy: A, i: Int) {
       val lhs = unsharedChild(i)
       val rhs = children(i + 1)
       assert(lhs.numKeys + 1 + rhs.numKeys <= MaxKeys)
@@ -328,17 +328,17 @@ object BTree2 {
       System.arraycopy(kk, i + 1, kk, i, numKeys - i - 1)
       System.arraycopy(vv, i + 1, vv, i, numKeys - i - 1)
       System.arraycopy(children, i + 2, children, i + 1, numKeys - i - 1)
-      trimMax()
+      trimMax(dummy)
     }
 
-    def trimMax() {
+    def trimMax(dummy: A) {
       if (children != null)
         children(numKeys) = null
-      leafTrimMax()
+      leafTrimMax(dummy)
     }
 
     // moves one entry from leftI+1 to leftI
-    def shuffleLeft(leftI: Int) {
+    def shuffleLeft(dummy: A, leftI: Int) {
       val lhs = unsharedChild(leftI)
       val rhs = unsharedChild(leftI + 1)
 
@@ -357,11 +357,11 @@ object BTree2 {
         System.arraycopy(rhs.children, 1, rhs.children, 0, rhs.numKeys + 1)
         rhs.children(rhs.numKeys) = null
       }
-      rhs.leafRemove(0)
+      rhs.leafRemove(dummy, 0)
     }
 
     // moves one entry from leftI to leftI+1
-    def shuffleRight(leftI: Int) {
+    def shuffleRight(dummy: A, leftI: Int) {
       val lhs = unsharedChild(leftI)
       val rhs = unsharedChild(leftI + 1)
 
@@ -376,7 +376,7 @@ object BTree2 {
       unsharedValues(leftI) = lhs.values(lhs.numKeys - 1)
 
       // trim lhs
-      lhs.trimMax()
+      lhs.trimMax(dummy)
     }
 
     def visit(v: ((A,B)) => Unit) {
@@ -608,9 +608,9 @@ object BTree2 {
     }
   }
 
-  def Range = 1000000
-  def InitialGetPct = 50
-  def GetPct = 70
+  def Range = 200
+  def InitialGetPct = 30
+  def GetPct = 30
   def IterPct = 1.0 / Range
 
   def testInt(rand: scala.util.Random) = {
