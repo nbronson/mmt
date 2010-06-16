@@ -251,7 +251,7 @@ object BTree2 {
       } else {
         // recurse
         val z = unsharedChild(~i).remove(k)
-        checkJoin(k, ~i)
+        if (z ne NotFound) checkJoin(k, ~i)
         z
       }
     }
@@ -583,12 +583,12 @@ object BTree2 {
 
   var cmpCount = 0
 
-  implicit val myOrder = new Ordering[Int] {
-    def compare(x: Int, y: Int): Int = {
-      cmpCount += 1
-      if (x < y) -1 else if (x == y) 0 else 1
-    }
-  }
+//  implicit val myOrder = new Ordering[Int] {
+//    def compare(x: Int, y: Int): Int = {
+//      cmpCount += 1
+//      if (x < y) -1 else if (x == y) 0 else 1
+//    }
+//  }
 
   def main(args: Array[String]) {
     val rands = Array.tabulate(6) { _ => new scala.util.Random(0) }
@@ -661,22 +661,11 @@ object BTree2 {
       val t0 = System.nanoTime
       var matching = 0
       while (i > 0) {
-        val key = keyGen()
-        val pct = rand.nextDouble() * 100
-        if (pct < gp) {
-          if (m.contains(key)) matching += 1
-        } else if (pct < gp + IterPct) {
-          // iterate
-          var n = 0
-          //for (e <- m.elements) n += 1
-          for (e <- m) n += 1
-          assert(n == m.size)
-        } else if (pct < 50 + (gp + IterPct) / 2) {
-          m(key) = "abc"
-        } else {
-          m -= key
-        }
-        i -= 1
+        matching += testBTree2One(rand, keyGen, gp, m)
+        matching += testBTree2One(rand, keyGen, gp, m)
+        matching += testBTree2One(rand, keyGen, gp, m)
+        matching += testBTree2One(rand, keyGen, gp, m)
+        i -= 4
       }
       if (matching < 0) println("unlikely")
       val elapsed = System.nanoTime - t0
@@ -684,6 +673,26 @@ object BTree2 {
     }
     val total = System.currentTimeMillis - tt0
     (best / 1000, total / 10)
+  }
+
+  def testBTree2One[@specialized A](rand: scala.util.Random, keyGen: () => A, gp: Double, m: BTree2.MutableTree[A,String]) = {
+    var matching = 0
+    val key = keyGen()
+    val pct = rand.nextDouble() * 100
+    if (pct < gp) {
+      if (m.contains(key)) matching += 1
+    } else if (pct < gp + IterPct) {
+      // iterate
+      var n = 0
+      //for (e <- m.elements) n += 1
+      for (e <- m) n += 1
+      assert(n == m.size)
+    } else if (pct < 50 + (gp + IterPct) / 2) {
+      m(key) = "abc"
+    } else {
+      m -= key
+    }
+    matching
   }
 
   def testFatLeaf4[@specialized A](rand: scala.util.Random, keyGen: () => A)(
@@ -697,22 +706,11 @@ object BTree2 {
       val t0 = System.nanoTime
       var matching = 0
       while (i > 0) {
-        val key = keyGen()
-        val pct = rand.nextDouble() * 100
-        if (pct < gp) {
-          if (m.contains(key)) matching += 1
-        } else if (pct < gp + IterPct) {
-          // iterate
-          var n = 0
-          //for (e <- m.elements) n += 1
-          for (e <- m) n += 1
-          assert(n == m.size)
-        } else if (pct < 50 + (gp + IterPct) / 2) {
-          m(key) = "abc"
-        } else {
-          m -= key
-        }
-        i -= 1
+        matching += testFatLeaf4One(rand, keyGen, gp, m)
+        matching += testFatLeaf4One(rand, keyGen, gp, m)
+        matching += testFatLeaf4One(rand, keyGen, gp, m)
+        matching += testFatLeaf4One(rand, keyGen, gp, m)
+        i -= 4
       }
       if (matching < 0) println("unlikely")
       val elapsed = System.nanoTime - t0
@@ -720,6 +718,26 @@ object BTree2 {
     }
     val total = System.currentTimeMillis - tt0
     (best / 1000, total / 10)
+  }
+
+  def testFatLeaf4One[@specialized A](rand: scala.util.Random, keyGen: () => A, gp: Double, m: FatLeaf4.MutableTree[A,String]) = {
+    var matching = 0
+    val key = keyGen()
+    val pct = rand.nextDouble() * 100
+    if (pct < gp) {
+      if (m.contains(key)) matching += 1
+    } else if (pct < gp + IterPct) {
+      // iterate
+      var n = 0
+      //for (e <- m.elements) n += 1
+      for (e <- m) n += 1
+      assert(n == m.size)
+    } else if (pct < 50 + (gp + IterPct) / 2) {
+      m(key) = "abc"
+    } else {
+      m -= key
+    }
+    matching
   }
 
   def testJavaTree[@specialized A](rand: scala.util.Random, keyGen: () => A)(implicit cmp: Ordering[A]): (Long,Long) = {
@@ -732,25 +750,11 @@ object BTree2 {
       val t0 = System.nanoTime
       var matching = 0
       while (i > 0) {
-        val key = keyGen()
-        val pct = rand.nextDouble() * 100
-        if (pct < gp) {
-          if (m.containsKey(key)) matching += 1
-        } else if (pct < gp + IterPct) {
-          // iterate
-          var n = 0
-          val iter = m.entrySet.iterator
-          while (iter.hasNext) {
-            iter.next()
-            n += 1
-          }
-          assert(n == m.size)
-        } else if (pct < 50 + (gp + IterPct) / 2) {
-          m.put(key, "abc")
-        } else {
-          m.remove(key)
-        }
-        i -= 1
+        matching += testJavaTreeOne(rand, keyGen, gp, m)
+        matching += testJavaTreeOne(rand, keyGen, gp, m)
+        matching += testJavaTreeOne(rand, keyGen, gp, m)
+        matching += testJavaTreeOne(rand, keyGen, gp, m)
+        i -= 4
       }
       if (matching < 0) println("unlikely")
       val elapsed = System.nanoTime - t0
@@ -758,5 +762,28 @@ object BTree2 {
     }
     val total = System.currentTimeMillis - tt0
     (best / 1000, total / 10)
+  }
+
+  def testJavaTreeOne[@specialized A](rand: scala.util.Random, keyGen: () => A, gp: Double, m: java.util.TreeMap[A,String]) = {
+    var matching = 0
+    val key = keyGen()
+    val pct = rand.nextDouble() * 100
+    if (pct < gp) {
+      if (m.containsKey(key)) matching += 1
+    } else if (pct < gp + IterPct) {
+      // iterate
+      var n = 0
+      val iter = m.entrySet.iterator
+      while (iter.hasNext) {
+        iter.next()
+        n += 1
+      }
+      assert(n == m.size)
+    } else if (pct < 50 + (gp + IterPct) / 2) {
+      m.put(key, "abc")
+    } else {
+      m.remove(key)
+    }
+    matching
   }
 }
