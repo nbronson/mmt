@@ -8,7 +8,37 @@ import java.util.NoSuchElementException
 object BTree2NotFound
 
 object BTree2 {
-  trait MyCmp[@specialized A] { def compare(k1: A, k2: A): Int }
+  trait MyCmp[@specialized A] {
+    def compare(k1: A, k2: A): Int
+
+    def keySearch(keys: Array[A], numKeys: Int, k: A): Int = {
+      var b = 0
+      var e = numKeys
+      while (b < e) {
+        val mid = (b + e) >>> 1
+        val c = compare(k, keys(mid))
+        if (c < 0) {
+          e = mid
+        } else if (c > 0) {
+          b = mid + 1
+        } else {
+          return mid
+        }
+      }
+      return ~b
+    }
+
+//    def treeContains[B](root: Node[A,B], k: A): Boolean = {
+//      var n = root
+//      (while (true) {
+//        val i = keySearch(n.keys, n.numKeys, k)
+//        if (i >= 0) return true
+//        if (n.children == null) return false
+//        n = n.children(~i)
+//      }).asInstanceOf[Nothing]
+//    }
+  }
+
   object MyCmpByte extends MyCmp[Byte] { def compare(k1: Byte, k2: Byte) = if (k1 < k2) -1 else if (k1 > k2) 1 else 0 }
   object MyCmpShort extends MyCmp[Short] { def compare(k1: Short, k2: Short) = if (k1 < k2) -1 else if (k1 > k2) 1 else 0 }
   object MyCmpChar extends MyCmp[Char] { def compare(k1: Char, k2: Char) = if (k1 < k2) -1 else if (k1 > k2) 1 else 0 }
@@ -49,27 +79,10 @@ object BTree2 {
 
     //////// read
 
-    def keySearch(k: A)(implicit cmp: MyCmp[A]): Int = {
-      var b = 0
-      var e = numKeys
-      while (b < e) {
-        val mid = (b + e) >>> 1
-        val c = cmp.compare(k, keys(mid))
-        if (c < 0) {
-          e = mid
-        } else if (c > 0) {
-          b = mid + 1
-        } else {
-          return mid
-        }
-      }
-      return ~b
-    }
-
     def contains(k: A)(implicit cmp: MyCmp[A]): Boolean = {
       var n = this
       (while (true) {
-        val i = n.keySearch(k)
+        val i = cmp.keySearch(n.keys, n.numKeys, k)
         if (i >= 0) return true
         if (n.children == null) return false
         n = n.children(~i)
@@ -79,7 +92,7 @@ object BTree2 {
     def get(k: A)(implicit cmp: MyCmp[A]): Option[B] = {
       var n = this
       (while (true) {
-        val i = n.keySearch(k)
+        val i = cmp.keySearch(n.keys, n.numKeys, k)
         if (i >= 0) return Some(values(i))
         if (n.children == null) return None
         n = n.children(~i)
@@ -236,7 +249,7 @@ object BTree2 {
     def remove(k: A)(implicit cmp: MyCmp[A]): AnyRef = {
       // Pre-splitting during put is not too hard, but we can't pre-join.  This
       // means that put is tail recursive, but not remove.
-      val i = keySearch(k)
+      val i = cmp.keySearch(keys, numKeys, k)
       if (i >= 0) {
         // hit
         val z = values(i)
@@ -464,6 +477,7 @@ object BTree2 {
     def size = _size
 
     def contains(k: A): Boolean = root.contains(k)
+    //def contains(k: A): Boolean = cmp.treeContains(root, k)
 
     def get(k: A): Option[B] = root.get(k)
 
@@ -610,7 +624,7 @@ object BTree2 {
 
   def Range = 200
   def InitialGetPct = 30
-  def GetPct = 30
+  def GetPct = 95
   def IterPct = 1.0 / Range
 
   def testInt(rand: scala.util.Random) = {
