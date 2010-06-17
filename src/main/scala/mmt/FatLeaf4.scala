@@ -399,6 +399,7 @@ object FatLeaf4 {
       tL.keys(leftSize) = b.key
       tL.values(leftSize) = b.value
       System.arraycopy(tR.keys, 0, tL.keys, leftSize + 1, LeafMax - 1 - (leftSize + 1))
+      System.arraycopy(tR.values, 0, tL.values, leftSize + 1, LeafMax - 1 - (leftSize + 1))
       tL.size = LeafMax - 1
       tL.parent = b.parent
 
@@ -667,9 +668,9 @@ object FatLeaf4 {
     }
   }
 
-  def Range = 10000
+  def Range = 100
   def InitialGetPct = 50
-  def GetPct = 50 // 70 //95
+  def GetPct = 30 // 70 //95
   def IterPct = 1.0 / Range
 
   def testInt(rand: scala.util.Random) = {
