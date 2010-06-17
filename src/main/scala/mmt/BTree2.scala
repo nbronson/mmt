@@ -622,10 +622,10 @@ object BTree2 {
     }
   }
 
-  def Range = 200
+  def Range = 200000
   def InitialGetPct = 30
-  def GetPct = 95
-  def IterPct = 1.0 / Range
+  def GetPct = 50
+  def IterPct = 20.0 / Range
 
   def testInt(rand: scala.util.Random) = {
     test[Int]("  Int", rand, () => rand.nextInt(Range))
@@ -699,7 +699,12 @@ object BTree2 {
       // iterate
       var n = 0
       //for (e <- m.elements) n += 1
-      for (e <- m) n += 1
+      //for (e <- m) n += 1
+      val iter = m.elements
+      while (iter.hasNext) {
+        iter.next()
+        n += 1
+      }
       assert(n == m.size)
     } else if (pct < 50 + (gp + IterPct) / 2) {
       m(key) = "abc"
@@ -744,7 +749,12 @@ object BTree2 {
       // iterate
       var n = 0
       //for (e <- m.elements) n += 1
-      for (e <- m) n += 1
+      //for (e <- m) n += 1
+      val iter = m.elements
+      while (iter.hasNext) {
+        iter.next()
+        n += 1
+      }
       assert(n == m.size)
     } else if (pct < 50 + (gp + IterPct) / 2) {
       m(key) = "abc"
