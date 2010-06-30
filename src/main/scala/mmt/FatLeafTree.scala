@@ -100,10 +100,10 @@ abstract class FatLeafTree[@specialized A,B](root0: FatLeafTree.Node[A,B], priva
   def put(k: A, v: B): Option[B] = put(unsharedRight(this), k, v)
   def remove(k: A): Option[B] = remove(unsharedRight(this), k)
 
-  def removeLT(k: A) { _cachedSize = -1 ; removeLT(unsharedRight(this), k) }
-  def removeLE(k: A) { _cachedSize = -1 ; removeLE(unsharedRight(this), k) }
-  def removeGE(k: A) { _cachedSize = -1 ; removeGE(unsharedRight(this), k) }
-  def removeGT(k: A) { _cachedSize = -1 ; removeGT(unsharedRight(this), k) }
+  def removeLT(k: A) { removeLT(unsharedRight(this), k) }
+  def removeLE(k: A) { removeLE(unsharedRight(this), k) }
+  def removeGE(k: A) { removeGE(unsharedRight(this), k) }
+  def removeGT(k: A) { removeGT(unsharedRight(this), k) }
 
   def frozenRoot: Node[A,B] = markShared(right)
 
@@ -408,6 +408,7 @@ abstract class FatLeafTree[@specialized A,B](root0: FatLeafTree.Node[A,B], priva
         if (c < 0) {
           removeLT(unsharedLeft(b), k)
         } else {
+          _cachedSize = -1
           val nR = unsharedRight(b)
           nR.parent = b.parent
           replaceAndRepair(b, nR)
@@ -434,6 +435,7 @@ abstract class FatLeafTree[@specialized A,B](root0: FatLeafTree.Node[A,B], priva
         if (c < 0) {
           removeLE(unsharedLeft(b), k)
         } else {
+          _cachedSize = -1
           val nR = unsharedRight(b)
           nR.parent = b.parent
           replaceAndRepair(b, nR)
@@ -456,6 +458,7 @@ abstract class FatLeafTree[@specialized A,B](root0: FatLeafTree.Node[A,B], priva
       case b: Br => {
         val c = compare(k, b.key)
         if (c <= 0) {
+          _cachedSize = -1
           val nL = unsharedLeft(b)
           nL.parent = b.parent
           replaceAndRepair(b, nL)
@@ -480,6 +483,7 @@ abstract class FatLeafTree[@specialized A,B](root0: FatLeafTree.Node[A,B], priva
       case b: Br => {
         val c = compare(k, b.key)
         if (c <= 0) {
+          _cachedSize = -1
           val nL = unsharedLeft(b)
           nL.parent = b.parent
           replaceAndRepair(b, nL)
@@ -506,6 +510,9 @@ abstract class FatLeafTree[@specialized A,B](root0: FatLeafTree.Node[A,B], priva
       clear(t, num, n)
       if (num < LeafMin)
         refill(t)
+
+      if (_cachedSize >= 0)
+        _cachedSize -= n
     }
   }
 
