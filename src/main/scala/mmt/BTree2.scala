@@ -622,10 +622,10 @@ object BTree2 {
     }
   }
 
-  def Range = 200000
+  def Range = 1000
   def InitialGetPct = 30
-  def GetPct = 50
-  def IterPct = 20.0 / Range
+  def GetPct = 99
+  def IterPct = 10.0 // 1.0 / Range
 
   def testInt(rand: scala.util.Random) = {
     test[Int]("  Int", rand, () => rand.nextInt(Range))

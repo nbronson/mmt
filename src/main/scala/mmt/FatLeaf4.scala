@@ -46,14 +46,11 @@ object FatLeaf4 {
   }
 
   class Leaf[@specialized A,B](par0: Branch[A,B],
-                               var _size: Int,
+                               var size: Int,
                                var keys: Array[A],
                                var values: Array[B]) extends Node[A,B](par0) {
     def this(par0: Branch[A,B], size0: Int)(implicit am: ClassManifest[A], bm: ClassManifest[B]) =
         this(par0, size0, new Array[A](LeafMax), new Array[B](LeafMax))
-
-    def size = _size
-    def size_=(v: Int) { assert(v >= LeafMin - 1 || parent.height < 0) ; _size = v }
   }
 
   def newEmptyRootHolder[@specialized A,B](implicit am: ClassManifest[A], bm: ClassManifest[B]) = {
@@ -251,7 +248,7 @@ object FatLeaf4 {
       // copy to right
       System.arraycopy(tL.keys, leftSize + 1, tR.keys, 0, rightSize)
       System.arraycopy(tL.values, leftSize + 1, tR.values, 0, rightSize)
-      clear(tL, rightSize, LeafMax - rightSize)
+      clear(tR, rightSize, LeafMax - rightSize)
 
       // fix up left
       tL.parent = b
@@ -364,7 +361,7 @@ object FatLeaf4 {
     }
 
     def refillAsLeft(tL: Leaf[A,B]) {
-      assert(tL.size == LeafMin - 1)
+      //assert(tL.size == LeafMin - 1)
       val b = tL.parent
       val tR = unsharedRight(b).asInstanceOf[Leaf[A,B]]
       if (tR.size == LeafMin)
@@ -380,7 +377,7 @@ object FatLeaf4 {
     }
   
     def refillAsRight(tR: Leaf[A,B]) {
-      assert(tR.size == LeafMin - 1)
+      //assert(tR.size == LeafMin - 1)
       val b = tR.parent
       val tL = unsharedLeft(b).asInstanceOf[Leaf[A,B]]
       if (tL.size == LeafMin)
@@ -394,7 +391,7 @@ object FatLeaf4 {
     }
 
     def merge(b: Branch[A,B], tL: Leaf[A,B], tR: Leaf[A,B]) {
-      assert(1 + tL.size + tR.size == LeafMax - 1)
+      //assert(1 + tL.size + tR.size == LeafMax - 1)
       val leftSize = tL.size
       tL.keys(leftSize) = b.key
       tL.values(leftSize) = b.value
