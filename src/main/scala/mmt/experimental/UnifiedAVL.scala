@@ -1,4 +1,4 @@
-package mmt
+package mmt.experimental
 
 import annotation.tailrec
 
@@ -9,8 +9,8 @@ private object UnifiedAVLFixRequired extends UnifiedAVL.PutResult
 
 object UnifiedAVL {
   
-  import mmt.{UnifiedAVLNotFound => NotFound}
-  import mmt.{UnifiedAVLFixRequired => FixRequired}
+  import mmt.experimental.{UnifiedAVLNotFound => NotFound}
+  import mmt.experimental.{UnifiedAVLFixRequired => FixRequired}
 
   trait PutResult
 

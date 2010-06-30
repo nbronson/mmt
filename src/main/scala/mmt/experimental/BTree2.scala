@@ -1,4 +1,4 @@
-package mmt
+package mmt.experimental
 
 import annotation.tailrec
 import java.util.NoSuchElementException
@@ -63,7 +63,7 @@ object BTree2 {
 
   ////////
 
-  import mmt.{BTree2NotFound => NotFound}
+  import mmt.experimental.{BTree2NotFound => NotFound}
 
   // try 1 for testing
   def MinKeys = 15

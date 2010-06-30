@@ -1,13 +1,13 @@
-package mmt
+package mmt.experimental
 
 import annotation.tailrec
 
-// FatLeaf
+// FatLeaf3
 
-private object FatLeafNotFound
+private object FatLeaf3NotFound
 
-object FatLeaf {
-  import mmt.{FatLeafNotFound => NotFound}
+object FatLeaf3 {
+  import mmt.experimental.{FatLeaf3NotFound => NotFound}
 
   private def Capacity = 15
   private def MinExtras = 6
@@ -45,11 +45,11 @@ object FatLeaf {
     def extraSize: Int = _extraSize & 255
     def extraSize_=(s: Int) { _extraSize = s.asInstanceOf[Byte] }
 
-    def keys(i: Int): A = extras(2 * i).asInstanceOf[A]
-    def setKey(i: Int, k: A) { extras(2 * i) = k.asInstanceOf[AnyRef] }
+    def keys(i: Int): A = extras(i).asInstanceOf[A]
+    def setKey(i: Int, k: A) { extras(i) = k.asInstanceOf[AnyRef] }
 
-    def values(i: Int): B = extras(2 * i + 1).asInstanceOf[B]
-    def setValue(i: Int, v: B) { extras(2 * i + 1) = v.asInstanceOf[AnyRef] }
+    def values(i: Int): B = extras(Capacity + i).asInstanceOf[B]
+    def setValue(i: Int, v: B) { extras(Capacity + i) = v.asInstanceOf[AnyRef] }
 
     def shared = parent eq null
 
@@ -219,7 +219,8 @@ object FatLeaf {
 
     def easyInsert(k: A, v: B, i: Int) {
       val n = extraSize - i
-      System.arraycopy(extras, 2 * i, extras, 2 * (i + 1), 2 * n)
+      System.arraycopy(extras, i, extras, i + 1, n)
+      System.arraycopy(extras, Capacity + i, extras, Capacity + i + 1, n)
       setKey(i, k)
       setValue(i, v)
       extraSize += 1
@@ -238,7 +239,8 @@ object FatLeaf {
 
       if (i < leftSize) {
         // right-most elements go to the right
-        System.arraycopy(extras, 2 * (Capacity - rightSize), newRight.extras, 0, 2 * rightSize)
+        System.arraycopy(extras, Capacity - rightSize, newRight.extras, 0, rightSize)
+        System.arraycopy(extras, 2 * Capacity - rightSize, newRight.extras, Capacity, rightSize)
 
         // k goes in left, element at leftSize - 1 would become the element at
         // leftSize if we had an intermediate copy to a single flat array of
@@ -247,16 +249,19 @@ object FatLeaf {
         value = values(leftSize - 1)
 
         // insert k and v
-        System.arraycopy(extras, 2 * i, extras, 2 * (i + 1), 2 * (leftSize - 1 - i))
+        System.arraycopy(extras, i, extras, i + 1, leftSize - 1 - i)
+        System.arraycopy(extras, Capacity + i, extras, Capacity + i + 1, leftSize - 1 - i)
         setKey(i, k)
         setValue(i, v)
       } else if (i > leftSize) {
         // k goes in right, element at leftSize becomes the pivot
         val ii = i - (leftSize + 1)
-        System.arraycopy(extras, 2 * (leftSize + 1), newRight.extras, 0, 2 * ii)
+        System.arraycopy(extras, leftSize + 1, newRight.extras, 0, ii)
+        System.arraycopy(extras, Capacity + leftSize + 1, newRight.extras, Capacity, ii)
         newRight.setKey(ii, k)
         newRight.setValue(ii, v)
-        System.arraycopy(extras, 2 * i, newRight.extras, 2 * (ii + 1), 2 * (rightSize - 1 - ii))
+        System.arraycopy(extras, i, newRight.extras, ii + 1, rightSize - 1 - ii)
+        System.arraycopy(extras, Capacity + i, newRight.extras, Capacity + ii + 1, rightSize - 1 - ii)
 
         key = keys(leftSize)
         value = values(leftSize)
@@ -264,7 +269,8 @@ object FatLeaf {
         // left.extras only needs a clear
       } else {
         // k and v become the new pivot
-        System.arraycopy(extras, 2 * leftSize, newRight.extras, 0, 2 * rightSize)
+        System.arraycopy(extras, leftSize, newRight.extras, 0, rightSize)
+        System.arraycopy(extras, Capacity + leftSize, newRight.extras, Capacity, rightSize)
         key = k
         value = v
       }
@@ -316,14 +322,16 @@ object FatLeaf {
 
     def openExtras(pos: Int, len: Int) {
       val n = extraSize
-      System.arraycopy(extras, 2 * pos, extras, 2 * (pos + len), 2 * (n + len))
+      System.arraycopy(extras, pos, extras, pos + len, n + len)
+      System.arraycopy(extras, Capacity + pos, extras, Capacity + pos + len, n + len)
       extraSize = n + len
     }
 
     def trimExtras(pos: Int, len: Int) {
       assert(pos >= 0 && len >= 0 && pos + len <= extraSize)
       val n = extraSize
-      System.arraycopy(extras, 2 * (pos + len), extras, 2 * pos, 2 * (n - (pos + len)))
+      System.arraycopy(extras, pos + len, extras, pos, n - (pos + len))
+      System.arraycopy(extras, Capacity + pos + len, extras, Capacity + pos, n - (pos + len))
       var j = 2 * (n - len)
       while (j < 2 * n) {
         extras(j) = null
@@ -371,7 +379,8 @@ object FatLeaf {
       extras = if (left.shared) left.extras.clone() else left.extras
       setKey(left.extraSize, key)
       setValue(left.extraSize, value)
-      System.arraycopy(right.extras, 0, extras, 2 * (left.extraSize + 1), 2 * right.extraSize)
+      System.arraycopy(right.extras, 0, extras, left.extraSize + 1, right.extraSize)
+      System.arraycopy(right.extras, Capacity, extras, Capacity + left.extraSize + 1, right.extraSize)
 
       // turn this into a leaf
       height = 1
@@ -389,7 +398,8 @@ object FatLeaf {
       // deal with left
       left.setKey(left.extraSize, key)
       left.setValue(left.extraSize, value)
-      System.arraycopy(right.extras, 0, left.extras, 2 * (left.extraSize + 1), 2 * (n - 1))
+      System.arraycopy(right.extras, 0, left.extras, left.extraSize + 1, n - 1)
+      System.arraycopy(right.extras, Capacity, left.extras, Capacity + left.extraSize + 1, n - 1)
       left.extraSize += n
 
       // fix this
@@ -410,7 +420,8 @@ object FatLeaf {
       right.openExtras(0, n)
       right.setKey(n - 1, key)
       right.setValue(n - 1, value)
-      System.arraycopy(left.extras, 2 * (left.extraSize - n + 1), right.extras, 0, 2 * (n - 1))
+      System.arraycopy(left.extras, left.extraSize - n + 1, right.extras, 0, n - 1)
+      System.arraycopy(left.extras, Capacity + left.extraSize - n + 1, right.extras, Capacity, n - 1)
 
       // fix this
       key = left.keys(left.extraSize - n)
@@ -430,54 +441,57 @@ object FatLeaf {
         1 + left.computeSize + right.computeSize
     }
 
-    def flattenInto(kv: Array[AnyRef], i: Int): Int = {
+    def flattenInto(kk: Array[AnyRef], vv: Array[AnyRef], i: Int): Int = {
       if (isLeaf) {
-        System.arraycopy(extras, 0, kv, i, 2 * extraSize)
-        i + 2 * extraSize
+        System.arraycopy(extras, 0, kk, i, extraSize)
+        System.arraycopy(extras, Capacity, vv, i, extraSize)
+        i + extraSize
       } else {
-        val i1 = left.flattenInto(kv, i)
-        kv(i1) = key.asInstanceOf[AnyRef]
-        kv(i1 + 1) = value.asInstanceOf[AnyRef]
-        right.flattenInto(kv, i1 + 2)
+        val i1 = left.flattenInto(kk, vv, i)
+        kk(i1) = key.asInstanceOf[AnyRef]
+        vv(i1) = value.asInstanceOf[AnyRef]
+        right.flattenInto(kk, vv, i1 + 1)
       }
     }
 
     def pack3() {
       val n = computeSize
-      val kv = new Array[AnyRef](2 * n)
-      flattenInto(kv, 0)
+      val kk = new Array[AnyRef](n)
+      val vv = new Array[AnyRef](n)
+      flattenInto(kk, vv, 0)
       if (n <= 2 * Capacity + 1) {
-        unpack2(kv, n)
+        unpack2(kk, vv, n)
         parent.fixHeightAndRebalance()
       } else {
         // we need three leaves again
         val rightSize = (n - 2) / 3
         val leftSize = n - rightSize - 1
 
-        left.unpack2(kv, leftSize)
+        left.unpack2(kk, vv, leftSize)
 
-        key = kv(2 * leftSize).asInstanceOf[A]
-        value = kv(2 * leftSize + 1).asInstanceOf[B]
+        key = kk(leftSize).asInstanceOf[A]
+        value = vv(leftSize).asInstanceOf[B]
 
         right = new Node(rightSize, this)
-        System.arraycopy(kv, 2 * (n - rightSize), right.extras, 0, 2 * rightSize)
+        System.arraycopy(kk, n - rightSize, right.extras, 0, rightSize)
+        System.arraycopy(vv, n - rightSize, right.extras, Capacity, rightSize)
       }
     }
 
-    def unpack2(kv: Array[AnyRef], n: Int) {
+    def unpack2(kk: Array[AnyRef], vv: Array[AnyRef], n: Int) {
       // we can fit into a branch and two leaves
       val leftSize = n / 2
 
       left = new Node[A,B](leftSize, this)
-      assert(2 * leftSize <= 2 * Capacity)
-      assert(2 * leftSize <= kv.length)
-      System.arraycopy(kv, 0, left.extras, 0, 2 * leftSize)
+      System.arraycopy(kk, 0, left.extras, 0, leftSize)
+      System.arraycopy(vv, 0, left.extras, Capacity, leftSize)
 
-      key = kv(2 * leftSize).asInstanceOf[A]
-      value = kv(2 * leftSize + 1).asInstanceOf[B]
+      key = kk(leftSize).asInstanceOf[A]
+      value = vv(leftSize).asInstanceOf[B]
 
       right = new Node[A,B](n - leftSize - 1, this)
-      System.arraycopy(kv, 2 * (leftSize + 1), right.extras, 0, 2 * (n - leftSize - 1))
+      System.arraycopy(kk, leftSize + 1, right.extras, 0, n - leftSize - 1)
+      System.arraycopy(vv, leftSize + 1, right.extras, Capacity, n - leftSize - 1)
 
       height = 2
     }
@@ -606,7 +620,7 @@ object FatLeaf {
   abstract class Tree[A,B](protected var rootHolder: Node[A,B],
                            protected var _size: Int)(implicit cmp: Ordering[A]) {
 
-    private[FatLeaf] def root = rootHolder.right
+    private[FatLeaf3] def root = rootHolder.right
 
     def isEmpty: Boolean = (_size == 0)
     def size: Int = _size
@@ -787,23 +801,27 @@ object FatLeaf {
 //    }
 //  }
 
-  def main0(args: Array[String]) {
-    val rands = Array.tabulate(5) { _ => new scala.util.Random(0) }
-    println("------------- adding short")
+  def main(args: Array[String]) {
+    val rands = Array.tabulate(6) { _ => new scala.util.Random(0) }
     for (pass <- 0 until 10) {
       testInt(rands(0))
-      testShort(rands(1))
+    }
+    println("------------- adding short")
+    for (pass <- 0 until 10) {
+      testInt(rands(1))
+      testShort(rands(2))
     }
     println("------------- adding long")
     for (pass <- 0 until 10) {
-      testInt(rands(2))
-      testShort(rands(3))
-      testLong(rands(4))
+      testInt(rands(3))
+      testShort(rands(4))
+      testLong(rands(5))
     }
   }
 
-  def Range = 10000
-  def GetPct = 50
+  def Range = 100000
+  def InitialGetPct = 50
+  def GetPct = 100 // 70 //95
   def IterPct = 1.0 / Range
 
   def testInt(rand: scala.util.Random) = {
@@ -820,37 +838,43 @@ object FatLeaf {
 
   def test[A](name: String, rand: scala.util.Random, keyGen: () => A)(implicit cmp: Ordering[A]) {
     cmpCount = 0
-    val (abest,aavg) = testTTree(rand, keyGen)
+    val (abest,aavg) = testFatLeaf(rand, keyGen)
     val ac = cmpCount
     //println("!!")
     cmpCount = 0
-    val (bbest,bavg) = testJavaTree(rand, keyGen)
+    val (bbest,bavg) = testFatLeaf3(rand, keyGen)
     val bc = cmpCount
+    cmpCount = 0
+    val (cbest,cavg) = testJavaTree(rand, keyGen)
+    val cc = cmpCount
     println(name + ": FatLeaf: " + abest + " nanos/op (" + aavg + " avg),  " +
-            "java.util.TreeMap: " + bbest + " nanos/op (" + bavg + " avg)")
-    if (ac > 0) println("  FatLeaf: " + ac + " compares,  java.util.TreeMap: " + bc + " compares")
+            name + ": FatLeaf3: " + bbest + " nanos/op (" + bavg + " avg),  " +
+            "java.util.TreeMap: " + cbest + " nanos/op (" + cavg + " avg)")
+    if (ac > 0)
+      println("  FatLeaf: " + ac + " compares,  FatLeaf2: " + bc + " compares,  java.util.TreeMap: " + cc + " compares")
   }
 
-  def testTTree[A](rand: scala.util.Random, keyGen: () => A)(implicit cmp: Ordering[A]): (Long,Long) = {
+  def testFatLeaf3[A](rand: scala.util.Random, keyGen: () => A)(implicit cmp: Ordering[A]): (Long,Long) = {
     val tt0 = System.currentTimeMillis
-    val m = new MutableTree[A,String]
+    val m = new FatLeaf3.MutableTree[A,String]
     var best = Long.MaxValue
     for (group <- 1 until 10000) {
+      val gp = if (group < 1000) InitialGetPct else GetPct
       var i = 1000
       val t0 = System.nanoTime
       var matching = 0
       while (i > 0) {
         val key = keyGen()
         val pct = rand.nextDouble() * 100
-        if (pct < GetPct) {
+        if (pct < gp) {
           if (m.contains(key)) matching += 1
-        } else if (pct < GetPct + IterPct) {
+        } else if (pct < gp + IterPct) {
           // iterate
           var n = 0
           //for (e <- m.elements) n += 1
           for (e <- m) n += 1
           assert(n == m.size)
-        } else if (pct < 50 + (GetPct + IterPct) / 2) {
+        } else if (pct < 50 + (gp + IterPct) / 2) {
           m(key) = "abc"
         } else {
           m -= key
@@ -859,7 +883,42 @@ object FatLeaf {
       }
       if (matching < 0) println("unlikely")
       val elapsed = System.nanoTime - t0
-      best = best min elapsed
+      if (group >= 1000) best = best min elapsed
+    }
+    val total = System.currentTimeMillis - tt0
+    (best / 1000, total / 10)
+  }
+
+  def testFatLeaf[A](rand: scala.util.Random, keyGen: () => A)(implicit cmp: Ordering[A]): (Long,Long) = {
+    val tt0 = System.currentTimeMillis
+    val m = new FatLeaf.MutableTree[A,String]
+    var best = Long.MaxValue
+    for (group <- 1 until 10000) {
+      val gp = if (group < 1000) InitialGetPct else GetPct
+      var i = 1000
+      val t0 = System.nanoTime
+      var matching = 0
+      while (i > 0) {
+        val key = keyGen()
+        val pct = rand.nextDouble() * 100
+        if (pct < gp) {
+          if (m.contains(key)) matching += 1
+        } else if (pct < gp + IterPct) {
+          // iterate
+          var n = 0
+          //for (e <- m.elements) n += 1
+          for (e <- m) n += 1
+          assert(n == m.size)
+        } else if (pct < 50 + (gp + IterPct) / 2) {
+          m(key) = "abc"
+        } else {
+          m -= key
+        }
+        i -= 1
+      }
+      if (matching < 0) println("unlikely")
+      val elapsed = System.nanoTime - t0
+      if (group >= 1000) best = best min elapsed
     }
     val total = System.currentTimeMillis - tt0
     (best / 1000, total / 10)
@@ -870,15 +929,16 @@ object FatLeaf {
     val m = new java.util.TreeMap[A,String](cmp)
     var best = Long.MaxValue
     for (group <- 1 until 10000) {
+      val gp = if (group < 1000) InitialGetPct else GetPct
       var i = 1000
       val t0 = System.nanoTime
       var matching = 0
       while (i > 0) {
         val key = keyGen()
         val pct = rand.nextDouble() * 100
-        if (pct < GetPct) {
+        if (pct < gp) {
           if (m.containsKey(key)) matching += 1
-        } else if (pct < GetPct + IterPct) {
+        } else if (pct < gp + IterPct) {
           // iterate
           var n = 0
           val iter = m.entrySet.iterator
@@ -887,7 +947,7 @@ object FatLeaf {
             n += 1
           }
           assert(n == m.size)
-        } else if (pct < 50 + (GetPct + IterPct) / 2) {
+        } else if (pct < 50 + (gp + IterPct) / 2) {
           m.put(key, "abc")
         } else {
           m.remove(key)
@@ -896,7 +956,7 @@ object FatLeaf {
       }
       if (matching < 0) println("unlikely")
       val elapsed = System.nanoTime - t0
-      best = best min elapsed
+      if (group >= 1000) best = best min elapsed
     }
     val total = System.currentTimeMillis - tt0
     (best / 1000, total / 10)

@@ -1,13 +1,13 @@
-package mmt
+package mmt.experimental
 
 import annotation.tailrec
 
-// FatLeaf3
+// FatLeaf2
 
-private object FatLeaf3NotFound
+private object FatLeaf2NotFound
 
-object FatLeaf3 {
-  import mmt.{FatLeaf3NotFound => NotFound}
+object FatLeaf2 {
+  import mmt.experimental.{FatLeaf2NotFound => NotFound}
 
   private def Capacity = 15
   private def MinExtras = 6
@@ -45,25 +45,23 @@ object FatLeaf3 {
     def extraSize: Int = _extraSize & 255
     def extraSize_=(s: Int) { _extraSize = s.asInstanceOf[Byte] }
 
-    def keys(i: Int): A = extras(i).asInstanceOf[A]
-    def setKey(i: Int, k: A) { extras(i) = k.asInstanceOf[AnyRef] }
+    def keys(i: Int): A = extras(2 * i).asInstanceOf[A]
+    def setKey(i: Int, k: A) { extras(2 * i) = k.asInstanceOf[AnyRef] }
 
-    def values(i: Int): B = extras(Capacity + i).asInstanceOf[B]
-    def setValue(i: Int, v: B) { extras(Capacity + i) = v.asInstanceOf[AnyRef] }
-
-    def shared = parent eq null
+    def values(i: Int): B = extras(2 * i + 1).asInstanceOf[B]
+    def setValue(i: Int, v: B) { extras(2 * i + 1) = v.asInstanceOf[AnyRef] }
 
     //////// reads
 
-    @tailrec def nodeForRead(k: A)(implicit cmp: Ordering[A]): Node[A,B] = {
+    @tailrec def nodeFor(k: A)(implicit cmp: Ordering[A]): Node[A,B] = {
       if (isLeaf) {
         this
       } else {
         val c = cmp.compare(k, key)
         if (c < 0) {
-          left.nodeForRead(k)
+          left.nodeFor(k)
         } else if (c > 0) {
-          right.nodeForRead(k)
+          right.nodeFor(k)
         } else {
           // exact match
           this
@@ -85,7 +83,7 @@ object FatLeaf3 {
           return mid
         }
       }
-      return ~b
+      return -(b + 1)
     }
 
     def foreach(block: ((A,B)) => Unit) {
@@ -104,17 +102,17 @@ object FatLeaf3 {
 
     //////// navigation on MUTABLE trees
 
-    @tailrec def unsharedLeftmost(): Node[A,B] = {
-      if (isLeaf) this else unsharedLeft().unsharedLeftmost()
+    @tailrec def leftmost: Node[A,B] = {
+      if (isLeaf) this else left.leftmost
     }
 
-    @tailrec def unsharedRightmost(): Node[A,B] = {
-      if (isLeaf) this else unsharedRight().unsharedRightmost()
+    @tailrec def rightmost: Node[A,B] = {
+      if (isLeaf) this else right.rightmost
     }
 
     // TODO: do we need this?
-    def unsharedPred(): Node[A,B] = {
-      if (isLeaf) parentPred else unsharedLeft().unsharedRightmost()
+    def pred: Node[A,B] = {
+      if (isLeaf) parentPred else left.rightmost
     }
 
     @tailrec def parentPred: Node[A,B] = {
@@ -126,8 +124,8 @@ object FatLeaf3 {
         parent.parentPred
     }
 
-    def unsharedSucc(): Node[A,B] = {
-      if (isLeaf) parentSucc else unsharedRight().unsharedLeftmost()
+    def succ: Node[A,B] = {
+      if (isLeaf) parentSucc else right.leftmost
     }
 
     @tailrec def parentSucc: Node[A,B] = {
@@ -139,53 +137,7 @@ object FatLeaf3 {
         parent.parentSucc
     }
     
-    /** On exit, left.state will be either SharedExtra or Unshared. */
-    def unsharedLeft(): Node[A,B] = {
-      if (left.shared)
-        left = left.unshare(this)
-      left
-    }
-
-    def unsharedRight(): Node[A,B] = {
-      if (right.shared)
-        right = right.unshare(this)
-      right
-    }
-
-    def unshare(p: Node[A,B]): Node[A,B] = {
-      if (!shared) {
-        this
-      } else if (isLeaf) {
-        // clone the keys and values array as well
-        new Node[A,B](1: Byte, _extraSize, key, value, p, null, null, extras.clone())
-      } else {
-        // push down the mark first
-        left.markShared()
-        right.markShared()
-        new Node[A,B](_height, 0: Byte, key, value, p, left, right, null)
-      }
-    }
-
-    def markShared() {
-      if (!shared)
-        parent = null
-    }
-
     //////// writes
-
-    @tailrec def nodeForWrite(k: A)(implicit cmp: Ordering[A]): Node[A,B] = {
-      if (isLeaf) {
-        this
-      } else {
-        val c = cmp.compare(k, key)
-        if (c < 0)
-          unsharedLeft().nodeForWrite(k)
-        else if (c > 0)
-          unsharedRight().nodeForWrite(k)
-        else
-          this
-      }
-    }
 
     def putHere(k: A, v: B)(implicit cmp: Ordering[A]): AnyRef = {
       if (isLeaf)
@@ -209,18 +161,17 @@ object FatLeaf3 {
         z.asInstanceOf[AnyRef]
       } else if (extraSize < Capacity) {
         // insert, space available
-        easyInsert(k, v, ~i)
+        easyInsert(k, v, -(i + 1))
         NotFound
       } else {
-        splittingInsert(k, v, ~i)
+        splittingInsert(k, v, -(i + 1))
         NotFound
       }
     }
 
     def easyInsert(k: A, v: B, i: Int) {
       val n = extraSize - i
-      System.arraycopy(extras, i, extras, i + 1, n)
-      System.arraycopy(extras, Capacity + i, extras, Capacity + i + 1, n)
+      System.arraycopy(extras, 2 * i, extras, 2 * (i + 1), 2 * n)
       setKey(i, k)
       setValue(i, v)
       extraSize += 1
@@ -239,8 +190,7 @@ object FatLeaf3 {
 
       if (i < leftSize) {
         // right-most elements go to the right
-        System.arraycopy(extras, Capacity - rightSize, newRight.extras, 0, rightSize)
-        System.arraycopy(extras, 2 * Capacity - rightSize, newRight.extras, Capacity, rightSize)
+        System.arraycopy(extras, 2 * (Capacity - rightSize), newRight.extras, 0, 2 * rightSize)
 
         // k goes in left, element at leftSize - 1 would become the element at
         // leftSize if we had an intermediate copy to a single flat array of
@@ -249,19 +199,16 @@ object FatLeaf3 {
         value = values(leftSize - 1)
 
         // insert k and v
-        System.arraycopy(extras, i, extras, i + 1, leftSize - 1 - i)
-        System.arraycopy(extras, Capacity + i, extras, Capacity + i + 1, leftSize - 1 - i)
+        System.arraycopy(extras, 2 * i, extras, 2 * (i + 1), 2 * (leftSize - 1 - i))
         setKey(i, k)
         setValue(i, v)
       } else if (i > leftSize) {
         // k goes in right, element at leftSize becomes the pivot
         val ii = i - (leftSize + 1)
-        System.arraycopy(extras, leftSize + 1, newRight.extras, 0, ii)
-        System.arraycopy(extras, Capacity + leftSize + 1, newRight.extras, Capacity, ii)
+        System.arraycopy(extras, 2 * (leftSize + 1), newRight.extras, 0, 2 * ii)
         newRight.setKey(ii, k)
         newRight.setValue(ii, v)
-        System.arraycopy(extras, i, newRight.extras, ii + 1, rightSize - 1 - ii)
-        System.arraycopy(extras, Capacity + i, newRight.extras, Capacity + ii + 1, rightSize - 1 - ii)
+        System.arraycopy(extras, 2 * i, newRight.extras, 2 * (ii + 1), 2 * (rightSize - 1 - ii))
 
         key = keys(leftSize)
         value = values(leftSize)
@@ -269,8 +216,7 @@ object FatLeaf3 {
         // left.extras only needs a clear
       } else {
         // k and v become the new pivot
-        System.arraycopy(extras, leftSize, newRight.extras, 0, rightSize)
-        System.arraycopy(extras, Capacity + leftSize, newRight.extras, Capacity, rightSize)
+        System.arraycopy(extras, 2 * leftSize, newRight.extras, 0, 2 * rightSize)
         key = k
         value = v
       }
@@ -305,7 +251,7 @@ object FatLeaf3 {
       // It's easier to steal from the end of our predecessor than from the
       // beginning of our successor.  This is an internal node, so its
       // predecessor is a leaf.
-      val pred = unsharedLeft().unsharedRightmost()
+      val pred = left.rightmost
       assert(pred.isLeaf)
 
       // steal one entry from the predecessor
@@ -322,16 +268,14 @@ object FatLeaf3 {
 
     def openExtras(pos: Int, len: Int) {
       val n = extraSize
-      System.arraycopy(extras, pos, extras, pos + len, n + len)
-      System.arraycopy(extras, Capacity + pos, extras, Capacity + pos + len, n + len)
+      System.arraycopy(extras, 2 * pos, extras, 2 * (pos + len), 2 * (n + len))
       extraSize = n + len
     }
 
     def trimExtras(pos: Int, len: Int) {
       assert(pos >= 0 && len >= 0 && pos + len <= extraSize)
       val n = extraSize
-      System.arraycopy(extras, pos + len, extras, pos, n - (pos + len))
-      System.arraycopy(extras, Capacity + pos + len, extras, Capacity + pos, n - (pos + len))
+      System.arraycopy(extras, 2 * (pos + len), extras, 2 * pos, 2 * (n - (pos + len)))
       var j = 2 * (n - len)
       while (j < 2 * n) {
         extras(j) = null
@@ -376,11 +320,10 @@ object FatLeaf3 {
 
     def merge2(newSize: Int) {
       // We can merge the three nodes into one.  We'll use left's extra array
-      extras = if (left.shared) left.extras.clone() else left.extras
+      extras = left.extras
       setKey(left.extraSize, key)
       setValue(left.extraSize, value)
-      System.arraycopy(right.extras, 0, extras, left.extraSize + 1, right.extraSize)
-      System.arraycopy(right.extras, Capacity, extras, Capacity + left.extraSize + 1, right.extraSize)
+      System.arraycopy(right.extras, 0, extras, 2 * (left.extraSize + 1), 2 * right.extraSize)
 
       // turn this into a leaf
       height = 1
@@ -398,8 +341,7 @@ object FatLeaf3 {
       // deal with left
       left.setKey(left.extraSize, key)
       left.setValue(left.extraSize, value)
-      System.arraycopy(right.extras, 0, left.extras, left.extraSize + 1, n - 1)
-      System.arraycopy(right.extras, Capacity, left.extras, Capacity + left.extraSize + 1, n - 1)
+      System.arraycopy(right.extras, 0, left.extras, 2 * (left.extraSize + 1), 2 * (n - 1))
       left.extraSize += n
 
       // fix this
@@ -420,8 +362,7 @@ object FatLeaf3 {
       right.openExtras(0, n)
       right.setKey(n - 1, key)
       right.setValue(n - 1, value)
-      System.arraycopy(left.extras, left.extraSize - n + 1, right.extras, 0, n - 1)
-      System.arraycopy(left.extras, Capacity + left.extraSize - n + 1, right.extras, Capacity, n - 1)
+      System.arraycopy(left.extras, 2 * (left.extraSize - n + 1), right.extras, 0, 2 * (n - 1))
 
       // fix this
       key = left.keys(left.extraSize - n)
@@ -441,57 +382,54 @@ object FatLeaf3 {
         1 + left.computeSize + right.computeSize
     }
 
-    def flattenInto(kk: Array[AnyRef], vv: Array[AnyRef], i: Int): Int = {
+    def flattenInto(kv: Array[AnyRef], i: Int): Int = {
       if (isLeaf) {
-        System.arraycopy(extras, 0, kk, i, extraSize)
-        System.arraycopy(extras, Capacity, vv, i, extraSize)
-        i + extraSize
+        System.arraycopy(extras, 0, kv, i, 2 * extraSize)
+        i + 2 * extraSize
       } else {
-        val i1 = left.flattenInto(kk, vv, i)
-        kk(i1) = key.asInstanceOf[AnyRef]
-        vv(i1) = value.asInstanceOf[AnyRef]
-        right.flattenInto(kk, vv, i1 + 1)
+        val i1 = left.flattenInto(kv, i)
+        kv(i1) = key.asInstanceOf[AnyRef]
+        kv(i1 + 1) = value.asInstanceOf[AnyRef]
+        right.flattenInto(kv, i1 + 2)
       }
     }
 
     def pack3() {
       val n = computeSize
-      val kk = new Array[AnyRef](n)
-      val vv = new Array[AnyRef](n)
-      flattenInto(kk, vv, 0)
+      val kv = new Array[AnyRef](2 * n)
+      flattenInto(kv, 0)
       if (n <= 2 * Capacity + 1) {
-        unpack2(kk, vv, n)
+        unpack2(kv, n)
         parent.fixHeightAndRebalance()
       } else {
         // we need three leaves again
         val rightSize = (n - 2) / 3
         val leftSize = n - rightSize - 1
 
-        left.unpack2(kk, vv, leftSize)
+        left.unpack2(kv, leftSize)
 
-        key = kk(leftSize).asInstanceOf[A]
-        value = vv(leftSize).asInstanceOf[B]
+        key = kv(2 * leftSize).asInstanceOf[A]
+        value = kv(2 * leftSize + 1).asInstanceOf[B]
 
         right = new Node(rightSize, this)
-        System.arraycopy(kk, n - rightSize, right.extras, 0, rightSize)
-        System.arraycopy(vv, n - rightSize, right.extras, Capacity, rightSize)
+        System.arraycopy(kv, 2 * (n - rightSize), right.extras, 0, 2 * rightSize)
       }
     }
 
-    def unpack2(kk: Array[AnyRef], vv: Array[AnyRef], n: Int) {
+    def unpack2(kv: Array[AnyRef], n: Int) {
       // we can fit into a branch and two leaves
       val leftSize = n / 2
 
       left = new Node[A,B](leftSize, this)
-      System.arraycopy(kk, 0, left.extras, 0, leftSize)
-      System.arraycopy(vv, 0, left.extras, Capacity, leftSize)
+      assert(2 * leftSize <= 2 * Capacity)
+      assert(2 * leftSize <= kv.length)
+      System.arraycopy(kv, 0, left.extras, 0, 2 * leftSize)
 
-      key = kk(leftSize).asInstanceOf[A]
-      value = vv(leftSize).asInstanceOf[B]
+      key = kv(2 * leftSize).asInstanceOf[A]
+      value = kv(2 * leftSize + 1).asInstanceOf[B]
 
       right = new Node[A,B](n - leftSize - 1, this)
-      System.arraycopy(kk, leftSize + 1, right.extras, 0, n - leftSize - 1)
-      System.arraycopy(vv, leftSize + 1, right.extras, Capacity, n - leftSize - 1)
+      System.arraycopy(kv, 2 * (leftSize + 1), right.extras, 0, 2 * (n - leftSize - 1))
 
       height = 2
     }
@@ -538,12 +476,11 @@ object FatLeaf3 {
     def balance = left.height - right.height
 
     def rotateRight(): Node[A,B] = {
-      val nL = left.unshare(this)
+      val nL = left
       nL.parent = parent
 
       left = nL.right
-      if (!left.shared)
-        left.parent = this
+      left.parent = this
 
       nL.right = this
       parent = nL
@@ -555,17 +492,16 @@ object FatLeaf3 {
     }
 
     def rotateRightOverLeft(): Node[A,B] = {
-      left = left.unshare(this).rotateLeft()
+      left = left.rotateLeft()
       rotateRight()
     }
 
     def rotateLeft(): Node[A,B] = {
-      val nR = right.unshare(this)
+      val nR = right
       nR.parent = parent
 
       right = nR.left
-      if (!right.shared)
-        right.parent = this
+      right.parent = this
 
       nR.left = this
       parent = nR
@@ -577,7 +513,7 @@ object FatLeaf3 {
     }
 
     def rotateLeftOverRight(): Node[A,B] = {
-      right = right.unshare(this).rotateRight()
+      right = right.rotateRight()
       rotateLeft()
     }
 
@@ -611,27 +547,21 @@ object FatLeaf3 {
     h
   }
 
-  // confusingly, this is a rootHolder of a shared root, not a shared rootHolder
-  private def sharedRootHolder[A,B](root: Node[A,B]): Node[A,B] = {
-    root.markShared()
-    new Node(-1: Byte, 0: Byte, null.asInstanceOf[A], null.asInstanceOf[B], null, null, root, null)
-  }
-
   abstract class Tree[A,B](protected var rootHolder: Node[A,B],
                            protected var _size: Int)(implicit cmp: Ordering[A]) {
 
-    private[FatLeaf3] def root = rootHolder.right
+    private[FatLeaf2] def root = rootHolder.right
 
     def isEmpty: Boolean = (_size == 0)
     def size: Int = _size
 
     def contains(key: A): Boolean = {
-      val n = root.nodeForRead(key)
+      val n = root.nodeFor(key)
       !n.isLeaf || n.keySearch(key) >= 0
     }
 
     def get(key: A): Option[B] = {
-      val n = root.nodeForRead(key)
+      val n = root.nodeFor(key)
       if (!n.isLeaf) {
         Some(n.value)
       } else {
@@ -644,7 +574,7 @@ object FatLeaf3 {
     }
 
     def apply(key: A): B = {
-      val n = root.nodeForRead(key)
+      val n = root.nodeFor(key)
       if (n.extraSize == 0) {
         n.value
       } else {
@@ -727,34 +657,9 @@ object FatLeaf3 {
     }
   }
 
-  class ImmutableTree[A,B] private (rh0: Node[A,B], size0: Int)(implicit cmp: Ordering[A]) extends Tree[A,B](rh0, size0) {
-
-    def this()(implicit cmp: Ordering[A]) = this(emptyRootHolder, 0)
-    def this(t: Tree[A,B])(implicit cmp: Ordering[A]) = this(sharedRootHolder(t.root), t.size)
-
-    override def clone: ImmutableTree[A,B] = this
-    def mutableClone: MutableTree[A,B] = new MutableTree(this)
-
-    def +(kv: (A,B)): ImmutableTree[A,B] = {
-      val newRH = sharedRootHolder(root)
-      val sizeDelta = if (newRH.nodeForWrite(kv._1).putHere(kv._1, kv._2) eq NotFound) 1 else 0
-      new ImmutableTree(newRH, size + sizeDelta)
-    }
-
-    def -(k: A): ImmutableTree[A,B] = {
-      val newRH = sharedRootHolder(root)
-      val sizeDelta = if (newRH.nodeForWrite(k).removeHere(k) eq NotFound) 0 else -1
-      new ImmutableTree(newRH, size + sizeDelta)
-    }
-  }
-
   class MutableTree[A,B] private (rh0: Node[A,B], size0: Int)(implicit cmp: Ordering[A]) extends Tree[A,B](rh0, size0) {
 
     def this()(implicit cmp: Ordering[A]) = this(emptyRootHolder, 0)
-    def this(t: Tree[A,B])(implicit cmp: Ordering[A]) = this(sharedRootHolder(t.root), t.size)
-
-    override def clone: MutableTree[A,B] = new MutableTree(this)
-    def immutableClone: ImmutableTree[A,B] = new ImmutableTree(this)
 
     def update(key: A, value: B) {
       putImpl(key, value)
@@ -767,7 +672,7 @@ object FatLeaf3 {
     }
 
     private def putImpl(key: A, value: B): AnyRef = {
-      val z = root.nodeForWrite(key).putHere(key, value)
+      val z = root.nodeFor(key).putHere(key, value)
       if (z eq NotFound)
         _size += 1
       z
@@ -784,7 +689,7 @@ object FatLeaf3 {
     }
 
     private def removeImpl(key: A): AnyRef = {
-      val z = root.nodeForWrite(key).removeHere(key)
+      val z = root.nodeFor(key).removeHere(key)
       if (z ne NotFound)
         _size -= 1
       z
@@ -819,9 +724,9 @@ object FatLeaf3 {
     }
   }
 
-  def Range = 100000
+  def Range = 10000
   def InitialGetPct = 50
-  def GetPct = 100 // 70 //95
+  def GetPct = 70 //95
   def IterPct = 1.0 / Range
 
   def testInt(rand: scala.util.Random) = {
@@ -842,21 +747,21 @@ object FatLeaf3 {
     val ac = cmpCount
     //println("!!")
     cmpCount = 0
-    val (bbest,bavg) = testFatLeaf3(rand, keyGen)
+    val (bbest,bavg) = testFatLeaf2(rand, keyGen)
     val bc = cmpCount
     cmpCount = 0
     val (cbest,cavg) = testJavaTree(rand, keyGen)
     val cc = cmpCount
     println(name + ": FatLeaf: " + abest + " nanos/op (" + aavg + " avg),  " +
-            name + ": FatLeaf3: " + bbest + " nanos/op (" + bavg + " avg),  " +
+            name + ": FatLeaf2: " + bbest + " nanos/op (" + bavg + " avg),  " +
             "java.util.TreeMap: " + cbest + " nanos/op (" + cavg + " avg)")
     if (ac > 0)
       println("  FatLeaf: " + ac + " compares,  FatLeaf2: " + bc + " compares,  java.util.TreeMap: " + cc + " compares")
   }
 
-  def testFatLeaf3[A](rand: scala.util.Random, keyGen: () => A)(implicit cmp: Ordering[A]): (Long,Long) = {
+  def testFatLeaf2[A](rand: scala.util.Random, keyGen: () => A)(implicit cmp: Ordering[A]): (Long,Long) = {
     val tt0 = System.currentTimeMillis
-    val m = new FatLeaf3.MutableTree[A,String]
+    val m = new FatLeaf2.MutableTree[A,String]
     var best = Long.MaxValue
     for (group <- 1 until 10000) {
       val gp = if (group < 1000) InitialGetPct else GetPct

@@ -1,4 +1,4 @@
-package mmt
+package mmt.experimental
 
 import annotation.tailrec
 
@@ -10,8 +10,8 @@ private object TTree1FixRequired extends TTree1.SearchResult
 object TTree1 {
   trait SearchResult
 
-  import mmt.{TTree1NotFound => NotFound}
-  import mmt.{TTree1FixRequired => FixRequired}
+  import mmt.experimental.{TTree1NotFound => NotFound}
+  import mmt.experimental.{TTree1FixRequired => FixRequired}
 
   private def Unshared = 0 : Byte
   private def SharedKeys = 1 : Byte
