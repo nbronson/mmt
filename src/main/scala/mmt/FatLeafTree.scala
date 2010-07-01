@@ -27,19 +27,86 @@ object FatLeafTree {
   def LeafMin = 15
   def LeafMax = 2 * LeafMin + 1
 
-  abstract class Node[A,B](var parent: Branch[A,B])
+  abstract class Node[A,B](var parent: Branch[A,B]) {
+    def isEmpty: Boolean
+    def height: Int
+  }
 
   class Branch[A,B](par0: Branch[A,B],
                     var height: Int,
                     var key: A,
                     var value: B,
                     var left: Node[A,B],
-                    var right: Node[A,B]) extends Node[A,B](par0)
+                    var right: Node[A,B]) extends Node[A,B](par0) {
+    def isEmpty = false
+  }
 
   class Leaf[A,B](par0: Branch[A,B],
                   var size: Int,
                   val keys: Array[A],
-                  val values: Array[B]) extends Node[A,B](par0)
+                  val values: Array[B]) extends Node[A,B](par0) {
+    def isEmpty = size == 0
+    def height = 1
+  }
+
+  //////// iteration
+
+  abstract class Iter[A,B,Z](root: Node[A,B]) extends Iterator[Z] {
+
+    //////// abstract
+
+    protected def result(k: A, v: B): Z
+
+    //////// implementation
+
+    private val stack = new Array[Node[A,B]](root.height)
+    private var depth = 0
+    private var index = 0
+
+    if (!root.isEmpty) pushMin(root)
+
+    @tailrec final def pushMin(n: Node[A,B]) {
+      stack(depth) = n
+      depth += 1
+      n match {
+        case b: Branch[A,B] => pushMin(b.left)
+        case _ => {}
+      }
+    }
+
+    private def advance() {
+      stack(depth - 1) match {
+        case t: Leaf[A,B] => {
+          if (index + 1 < t.size) {
+            // more entries in this node
+            index += 1
+          } else {
+            index = 0
+            // no children, so just pop
+            depth -= 1
+            stack(depth) = null
+          }
+        }
+        case b: Branch[A,B] => {
+          // pop current node
+          depth -= 1
+          pushMin(b.right)
+        }
+      }
+    }
+
+    def hasNext = depth > 0
+
+    def next: Z = {
+      if (depth == 0) throw new IllegalStateException
+      val z = stack(depth - 1) match {
+        case t: Leaf[A,B] => result(t.keys(index), t.values(index))
+        case b: Branch[A,B] => result(b.key, b.value)
+      }
+      advance()
+      z
+    }
+  }
 
   //////// concrete tree implementations
 
@@ -88,7 +155,7 @@ abstract class FatLeafTree[@specialized A,B](root0: FatLeafTree.Node[A,B], priva
 
   override def clone(): FatLeafTree[A,B] = cloneImpl()
 
-  def isEmpty: Boolean = isEmpty(right)
+  override def isEmpty: Boolean = right.isEmpty
   def size: Int = sizeImpl
   def sizeIfCached: Int = _cachedSize
 
@@ -107,6 +174,18 @@ abstract class FatLeafTree[@specialized A,B](root0: FatLeafTree.Node[A,B], priva
 
   def frozenRoot: Node[A,B] = markShared(right)
 
+  def keysIterator: Iterator[A] = new Iter[A,B,A](frozenRoot) {
+    protected def result(k: A, v: B) = k
+  }
+  def valuesIterator: Iterator[B] = new Iter[A,B,B](frozenRoot) {
+    protected def result(k: A, v: B) = v
+  }
+  def iterator: Iterator[(A,B)] = new Iter[A,B,(A,B)](frozenRoot) {
+    protected def result(k: A, v: B) = (k,v)
+  }
+  def stableForeach(f: (A, B) => Unit) { foreach(frozenRoot, f) }
+  def unstableForeach(f: (A, B) => Unit) { foreach(right, f) }
+
   //////// internal machinery
 
   private type Nd = Node[A,B]
@@ -114,11 +193,6 @@ abstract class FatLeafTree[@specialized A,B](root0: FatLeafTree.Node[A,B], priva
   private type Br = Branch[A,B]
 
   //////// size
-
-  private def isEmpty(n: Nd): Boolean = n match {
-    case t: Lf => t.size > 0
-    case _ => true
-  }
 
   private def sizeImpl: Int = {
     if (_cachedSize < 0)
@@ -548,13 +622,8 @@ abstract class FatLeafTree[@specialized A,B](root0: FatLeafTree.Node[A,B], priva
 
   //////// AVL rebalancing
 
-  private def height(n: Nd) = n match {
-    case b: Br => b.height
-    case _ => 1
-  }
-
   private def balance(n: Nd) = n match {
-    case b: Br => height(b.left) - height(b.right)
+    case b: Br => b.left.height - b.right.height
     case _ => 0
   }
 
@@ -565,8 +634,8 @@ abstract class FatLeafTree[@specialized A,B](root0: FatLeafTree.Node[A,B], priva
     if (h0 < 0)
       return
 
-    val hL = height(b.left)
-    val hR = height(b.right)
+    val hL = b.left.height
+    val hR = b.right.height
     val bal = hL - hR
     if (bal > 1) {
       // Left is too large, rotate right.  If left.right is larger than
@@ -614,8 +683,8 @@ abstract class FatLeafTree[@specialized A,B](root0: FatLeafTree.Node[A,B], priva
     nL.right = b
     b.parent = nL
 
-    b.height = 1 + math.max(height(b.left), height(b.right))
-    nL.height = 1 + math.max(height(nL.left), b.height)
+    b.height = 1 + math.max(b.left.height, b.right.height)
+    nL.height = 1 + math.max(nL.left.height, b.height)
 
     nL
   }
@@ -636,8 +705,8 @@ abstract class FatLeafTree[@specialized A,B](root0: FatLeafTree.Node[A,B], priva
     nR.left = b
     b.parent = nR
 
-    b.height = 1 + math.max(height(b.right), height(b.left))
-    nR.height = 1 + math.max(height(nR.right), b.height)
+    b.height = 1 + math.max(b.right.height, b.left.height)
+    nR.height = 1 + math.max(nR.right.height, b.height)
 
     nR
   }
@@ -647,67 +716,22 @@ abstract class FatLeafTree[@specialized A,B](root0: FatLeafTree.Node[A,B], priva
     rotateLeft(b)
   }
 
-//  //////// enumeration
-//
-//  def foreach(block: ((A,B)) => Unit) { foreach(right, block) }
-//
-//  def foreach(n: Nd, block: ((A,B)) => Unit): Unit = n match {
-//    case b: Br => {
-//      foreach(b.left, block)
-//      block((b.key, b.value))
-//      foreach(b.right, block)
-//    }
-//    case t: Lf => {
-//      var i = 0
-//      while (i < t.size) { block((t.keys(i), t.values(i))) ; i += 1 }
-//    }
-//  }
-//
-//  def elements: Iterator[(A,B)] = new Iterator[(A,B)] {
-//    private val stack = new Array[Nd](height(right))
-//    private var depth = 0
-//    private var index = 0
-//
-//    if (_size > 0) pushMin(right)
-//
-//    @tailrec final def pushMin(n: Nd) {
-//      stack(depth) = n
-//      depth += 1
-//      n match {
-//        case b: Br => pushMin(b.left)
-//        case _ => {}
-//      }
-//    }
-//
-//    private def advance(): Unit = stack(depth - 1) match {
-//      case b: Br => {
-//        // pop current node
-//        depth -= 1
-//        pushMin(b.right)
-//      }
-//      case t: Lf => {
-//        if (index + 1 < t.size) {
-//          // more entries in this node
-//          index += 1
-//        } else {
-//          index = 0
-//          // no children, so just pop
-//          depth -= 1
-//          stack(depth) = null
-//        }
-//      }
-//    }
-//
-//    def hasNext = depth > 0
-//
-//    def next = {
-//      if (depth == 0) throw new IllegalStateException
-//      val z = stack(depth - 1) match {
-//        case b: Br => (b.key, b.value)
-//        case t: Lf => (t.keys(index), t.values(index))
-//      }
-//      advance()
-//      z
-//    }
-//  }
+  //////// enumeration
+
+  private def foreach(n: Nd, f: (A, B) => Unit) {
+    n match {
+      case t: Lf => {
+        var i = 0
+        while (i < t.size) {
+          f(t.keys(i), t.values(i))
+          i += 1
+        }
+      }
+      case b: Br => {
+        foreach(b.left, f)
+        f(b.key, b.value)
+        foreach(b.right, f)
+      }
+    }
+  }
 }
