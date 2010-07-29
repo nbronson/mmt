@@ -6,20 +6,18 @@ object FatLeafTree {
 
   //////// factory method
 
-  def empty[A,B](implicit cmp: Ordering[A], am: ClassManifest[A], bm: ClassManifest[B]): FatLeafTree[A,B] = {
-    val tree = (cmp match {
-      case Ordering.Boolean => new DefaultBoolean(null, 0)
-      case Ordering.Byte    => new DefaultByte(null, 0)
-      case Ordering.Short   => new DefaultShort(null, 0)
-      case Ordering.Char    => new DefaultChar(null, 0)
-      case Ordering.Int     => new DefaultInt(null, 0)
-      case Ordering.Float   => new DefaultFloat(null, 0)
-      case Ordering.Long    => new DefaultLong(null, 0)
-      case Ordering.Double  => new DefaultDouble(null, 0)
-      case _                => new Generic(null, 0, cmp)
+  def empty[A,B](implicit cmp: Ordering[A]): FatLeafTree[A,B] = {
+    (cmp match {
+      case Ordering.Boolean => new DefaultBoolean()
+      case Ordering.Byte    => new DefaultByte()
+      case Ordering.Short   => new DefaultShort()
+      case Ordering.Char    => new DefaultChar()
+      case Ordering.Int     => new DefaultInt()
+      case Ordering.Float   => new DefaultFloat()
+      case Ordering.Long    => new DefaultLong()
+      case Ordering.Double  => new DefaultDouble()
+      case _                => new Generic(cmp)
     }).asInstanceOf[FatLeafTree[A,B]]
-    tree.right = new Leaf[A,B](tree, 0, new Array[A](LeafMax), new Array[B](LeafMax))
-    tree
   }
 
   //////// tree structure
@@ -44,9 +42,14 @@ object FatLeafTree {
   class Leaf[A,B](par0: Branch[A,B],
                   var size: Int,
                   val keys: Array[A],
-                  val values: Array[B]) extends Node[A,B](par0) {
+                  val values: Array[AnyRef]) extends Node[A,B](par0) {
+    def this(par0: Branch[A,B])(implicit am: ClassManifest[A]) =
+      this(par0, 0, new Array[A](LeafMax), new Array[AnyRef](LeafMax))
+
     def isEmpty = size == 0
     def height = 1
+    def getValue(i: Int): B = values(i).asInstanceOf[B]
+    def setValue(i: Int, v: B) { values(i) = v.asInstanceOf[AnyRef] }
   }
 
   //////// iteration
@@ -100,7 +103,7 @@ object FatLeafTree {
     def next: Z = {
       if (depth == 0) throw new IllegalStateException
       val z = stack(depth - 1) match {
-        case t: Leaf[A,B] => result(t.keys(index), t.values(index))
+        case t: Leaf[A,B] => result(t.keys(index), t.getValue(index))
         case b: Branch[A,B] => result(b.key, b.value)
       }
       advance()
@@ -111,45 +114,67 @@ object FatLeafTree {
   //////// concrete tree implementations
 
   class DefaultBoolean[B](root0: Node[Boolean,B], sic0: Int) extends FatLeafTree[Boolean,B](root0, sic0) with Ordering.BooleanOrdering {
+    def this() = { this(null, 0) ; right = new Leaf[Boolean,B](this) }
     def cloneImpl() = new DefaultBoolean(frozenRoot, sizeIfCached)
+    def ordering = Ordering.Boolean
   }
   class DefaultByte[B](root0: Node[Byte,B], sic0: Int) extends FatLeafTree[Byte,B](root0, sic0) with Ordering.ByteOrdering {
+    def this() = { this(null, 0) ; right = new Leaf[Byte,B](this) }
     def cloneImpl() = new DefaultByte(frozenRoot, sizeIfCached)
+    def ordering = Ordering.Byte
   }
   class DefaultShort[B](root0: Node[Short,B], sic0: Int) extends FatLeafTree[Short,B](root0, sic0) with Ordering.ShortOrdering {
+    def this() = { this(null, 0) ; right = new Leaf[Short,B](this) }
     def cloneImpl() = new DefaultShort(frozenRoot, sizeIfCached)
+    def ordering = Ordering.Short
   }
   class DefaultChar[B](root0: Node[Char,B], sic0: Int) extends FatLeafTree[Char,B](root0, sic0) with Ordering.CharOrdering {
+    def this() = { this(null, 0) ; right = new Leaf[Char,B](this) }
     def cloneImpl() = new DefaultChar(frozenRoot, sizeIfCached)
+    def ordering = Ordering.Char
   }
   class DefaultInt[B](root0: Node[Int,B], sic0: Int) extends FatLeafTree[Int,B](root0, sic0) with Ordering.IntOrdering {
+    def this() = { this(null, 0) ; right = new Leaf[Int,B](this) }
     def cloneImpl() = new DefaultInt(frozenRoot, sizeIfCached)
+    def ordering = Ordering.Int
   }
   class DefaultFloat[B](root0: Node[Float,B], sic0: Int) extends FatLeafTree[Float,B](root0, sic0) with Ordering.FloatOrdering {
+    def this() = { this(null, 0) ; right = new Leaf[Float,B](this) }
     def cloneImpl() = new DefaultFloat(frozenRoot, sizeIfCached)
+    def ordering = Ordering.Float
   }
   class DefaultLong[B](root0: Node[Long,B], sic0: Int) extends FatLeafTree[Long,B](root0, sic0) with Ordering.LongOrdering {
+    def this() = { this(null, 0) ; right = new Leaf[Long,B](this) }
     def cloneImpl() = new DefaultLong(frozenRoot, sizeIfCached)
+    def ordering = Ordering.Long
   }
   class DefaultDouble[B](root0: Node[Double,B], sic0: Int) extends FatLeafTree[Double,B](root0, sic0) with Ordering.DoubleOrdering {
+    def this() = { this(null, 0) ; right = new Leaf[Double,B](this) }
     def cloneImpl() = new DefaultDouble(frozenRoot, sizeIfCached)
+    def ordering = Ordering.Double
   }
-  class Generic[A,B](root0: Node[A,B], sic0: Int, cmp: Ordering[A]) extends FatLeafTree[A,B](root0, sic0)  {
-    def compare(lhs: A, rhs: A): Int = cmp.compare(lhs, rhs)
-    def cloneImpl() = new Generic(frozenRoot, sizeIfCached, cmp)
+  class Generic[A,B](root0: Node[A,B], sic0: Int, val ordering: Ordering[A]) extends FatLeafTree[A,B](root0, sic0)  {
+    def this(cmp: Ordering[A]) = {
+      this(null, 0, cmp)
+      right = (new Leaf[AnyRef,B](this.asInstanceOf[Branch[AnyRef,B]])).asInstanceOf[Leaf[A,B]]
+    }
+    def cloneImpl() = new Generic(frozenRoot, sizeIfCached, ordering)
+    def compare(lhs: A, rhs: A): Int = ordering.compare(lhs, rhs)
   }
 
 }
 
 abstract class FatLeafTree[@specialized A,B](root0: FatLeafTree.Node[A,B], private var _cachedSize: Int) extends FatLeafTree.Branch[A,B](
-    null, -1, null.asInstanceOf[A], null.asInstanceOf[B], null, root0) with Ordering[A] {
+    null, -1, null.asInstanceOf[A], null.asInstanceOf[B], null, root0) {
 
   import FatLeafTree._
 
   //////// abstract members
 
   def cloneImpl(): FatLeafTree[A,B]
-  //def compare(lhs: A, rhs: A): Int
+
+  def compare(lhs: A, rhs: A): Int
+  def ordering: Ordering[A]
 
   //////// public interface
 
@@ -236,7 +261,7 @@ abstract class FatLeafTree[@specialized A,B](root0: FatLeafTree.Node[A,B], priva
   @tailrec private def get(n: Nd, k: A): Option[B] = n match {
     case t: Lf => {
       val i = keySearch(t, k)
-      if (i >= 0) Some(t.values(i)) else None
+      if (i >= 0) Some(t.getValue(i)) else None
     }
     case b: Br => {
       val c = compare(k, b.key)
@@ -274,8 +299,8 @@ abstract class FatLeafTree[@specialized A,B](root0: FatLeafTree.Node[A,B], priva
   private def leafPut(t: Lf, k: A, v: B): Option[B] = {
     val i = keySearch(t, k)
     if (i >= 0) {
-      val z = t.values(i)
-      t.values(i) = v
+      val z = t.getValue(i)
+      t.setValue(i, v)
       Some(z)
     } else {
       leafInsert(t, ~i, k, v)
@@ -300,7 +325,7 @@ abstract class FatLeafTree[@specialized A,B](root0: FatLeafTree.Node[A,B], priva
 
     // copy the values
     t.keys(i) = k
-    t.values(i) = v
+    t.setValue(i, v)
 
     // split if necessary
     if (num + 1 == LeafMax)
@@ -312,7 +337,7 @@ abstract class FatLeafTree[@specialized A,B](root0: FatLeafTree.Node[A,B], priva
     val rightSize = LeafMax - 1 - leftSize
 
     // existing terminal becomes left leaf, create new branch
-    val b = new Br(tL.parent, 2, tL.keys(leftSize), tL.values(leftSize), tL, null)
+    val b = new Br(tL.parent, 2, tL.keys(leftSize), tL.getValue(leftSize), tL, null)
     val tR = new Lf(b, rightSize, tL.keys.clone(), tL.values.clone())
     b.right = tR
 
@@ -364,7 +389,7 @@ abstract class FatLeafTree[@specialized A,B](root0: FatLeafTree.Node[A,B], priva
   private def leafRemove(t: Lf, k: A): Option[B] = {
     val i = keySearch(t, k)
     if (i >= 0) {
-      val z = t.values(i)
+      val z = t.getValue(i)
       leafRemoveByIndex(t, i)
       if (_cachedSize >= 0)
         _cachedSize -= 1
@@ -380,7 +405,7 @@ abstract class FatLeafTree[@specialized A,B](root0: FatLeafTree.Node[A,B], priva
         // steal one
         val i = t.size - 1
         target.key = t.keys(i)
-        target.value = t.values(i)
+        target.value = t.getValue(i)
         leafRemoveMax(t)
       }
       case b: Br => copyAndRemoveMax(target, unsharedRight(b))
@@ -433,10 +458,10 @@ abstract class FatLeafTree[@specialized A,B](root0: FatLeafTree.Node[A,B], priva
       merge(b, tL, tR)
     else {
       tL.keys(LeafMin - 1) = b.key
-      tL.values(LeafMin - 1) = b.value
+      tL.setValue(LeafMin - 1, b.value)
       tL.size = LeafMin
       b.key = tR.keys(0)
-      b.value = tR.values(0)
+      b.value = tR.getValue(0)
       leafRemoveByIndex(tR, 0)
     }
   }
@@ -450,14 +475,14 @@ abstract class FatLeafTree[@specialized A,B](root0: FatLeafTree.Node[A,B], priva
     else {
       leafInsert(tR, 0, b.key, b.value)
       b.key = tL.keys(tL.size - 1)
-      b.value = tL.values(tL.size - 1)
+      b.value = tL.getValue(tL.size - 1)
       leafRemoveMax(tL)
     }
   }
 
   private def merge(b: Br, tL: Lf, tR: Lf) {
     tL.keys(tL.size) = b.key
-    tL.values(tL.size) = b.value
+    tL.setValue(tL.size, b.value)
     System.arraycopy(tR.keys, 0, tL.keys, tL.size + 1, tR.size)
     System.arraycopy(tR.values, 0, tL.values, tL.size + 1, tR.size)
     tL.size += 1 + tR.size
@@ -606,7 +631,6 @@ abstract class FatLeafTree[@specialized A,B](root0: FatLeafTree.Node[A,B], priva
 
   private def unshare(n: Nd, p: Br): Nd = n match {
     case t: Lf =>
-      // TODO: manifest?
       new Lf(p, t.size, t.keys.clone(), t.values.clone())
     case b: Br =>
       markShared(b.left)
@@ -723,7 +747,7 @@ abstract class FatLeafTree[@specialized A,B](root0: FatLeafTree.Node[A,B], priva
       case t: Lf => {
         var i = 0
         while (i < t.size) {
-          f(t.keys(i), t.values(i))
+          f(t.keys(i), t.getValue(i))
           i += 1
         }
       }
