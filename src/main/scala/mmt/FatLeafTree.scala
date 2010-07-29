@@ -179,10 +179,21 @@ abstract class FatLeafTree[@specialized A,B](root0: FatLeafTree.Node[A,B], priva
   //////// public interface
 
   override def clone(): FatLeafTree[A,B] = cloneImpl()
+  def freeze() { frozenRoot }
 
   override def isEmpty: Boolean = right.isEmpty
   def size: Int = sizeImpl
   def sizeIfCached: Int = _cachedSize
+
+  def clear() {
+    // TODO: we can do a bit better
+    if (!isEmpty) {
+      right = empty[A,B](ordering).right
+      assert(right.parent != null)
+      right.parent = this
+      _cachedSize = 0
+    }
+  }
 
   def firstKey: A = firstKey(right)
   def lastKey: A = lastKey(right)
@@ -197,8 +208,6 @@ abstract class FatLeafTree[@specialized A,B](root0: FatLeafTree.Node[A,B], priva
   def removeGE(k: A) { removeGE(unsharedRight(this), k) }
   def removeGT(k: A) { removeGT(unsharedRight(this), k) }
 
-  def frozenRoot: Node[A,B] = markShared(right)
-
   def keysIterator: Iterator[A] = new Iter[A,B,A](frozenRoot) {
     protected def result(k: A, v: B) = k
   }
@@ -208,14 +217,16 @@ abstract class FatLeafTree[@specialized A,B](root0: FatLeafTree.Node[A,B], priva
   def iterator: Iterator[(A,B)] = new Iter[A,B,(A,B)](frozenRoot) {
     protected def result(k: A, v: B) = (k,v)
   }
-  def stableForeach(f: (A, B) => Unit) { foreach(frozenRoot, f) }
-  def unstableForeach(f: (A, B) => Unit) { foreach(right, f) }
+  def stableForeach(f: (A,B) => Unit) { foreach(frozenRoot, f) }
+  def unstableForeach(f: (A,B) => Unit) { foreach(right, f) }
 
   //////// internal machinery
 
   private type Nd = Node[A,B]
   private type Lf = Leaf[A,B]
   private type Br = Branch[A,B]
+
+  private def frozenRoot: Node[A,B] = markShared(right)
 
   //////// size
 
@@ -742,7 +753,7 @@ abstract class FatLeafTree[@specialized A,B](root0: FatLeafTree.Node[A,B], priva
 
   //////// enumeration
 
-  private def foreach(n: Nd, f: (A, B) => Unit) {
+  private def foreach(n: Nd, f: (A,B) => Unit) {
     n match {
       case t: Lf => {
         var i = 0
