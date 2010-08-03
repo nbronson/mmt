@@ -177,7 +177,6 @@ abstract class FatLeafTree[@specialized A, B](
   def sizeIfCached: Int = _cachedSize
 
   def clear() {
-    // TODO: we can do a bit better
     if (!isEmpty) {
       right = empty[A, B].right
       assert(right.parent != null)
@@ -188,6 +187,8 @@ abstract class FatLeafTree[@specialized A, B](
 
   def firstKey: A = firstKey(right)
   def lastKey: A = lastKey(right)
+  def head: (A, B) = head(right)
+  def last: (A, B) = last(right)
   def contains(k: A): Boolean = contains(right, k)
   def get(k: A): Option[B] = get(right, k)
 
@@ -250,6 +251,24 @@ abstract class FatLeafTree[@specialized A, B](
       t.keys(t.size - 1)
     }
     case b: Br => lastKey(b.right)
+  }
+
+  @tailrec private def head(n: Nd): (A, B) = n match {
+    case t: Lf => {
+      if (t.size == 0)
+        throw new NoSuchElementException
+      (t.keys(0), t.getValue(0))
+    }
+    case b: Br => head(b.left)
+  }
+
+  @tailrec private def last(n: Nd): (A, B) = n match {
+    case t: Lf => {
+      if (t.size == 0)
+        throw new NoSuchElementException
+      (t.keys(t.size - 1), t.getValue(t.size - 1))
+    }
+    case b: Br => last(b.right)
   }
 
   @tailrec private def contains(n: Nd, k: A): Boolean = n match {
@@ -667,31 +686,36 @@ abstract class FatLeafTree[@specialized A, B](
     case _ => 0
   }
 
-  private def repair(b: Br) {
+  @tailrec private def repair(b: Br) {
     val h0 = b.height
 
-    // no repair for the root holder
-    if (h0 < 0)
-      return
-
-    val hL = b.left.height
-    val hR = b.right.height
-    val bal = hL - hR
-    if (bal > 1) {
-      // Left is too large, rotate right.  If left.right is larger than
-      // left.left then rotating right will lead to a -2 balance, so
-      // first we have to rotateLeft on left.
-      replaceAndMaybeRepair(b, h0, if (balance(b.left) < 0) rotateRightOverLeft(b) else rotateRight(b))
-      // TODO: multi-repair right
-    } else if (bal < -1) {
-      replaceAndMaybeRepair(b, h0, if (balance(b.right) > 0) rotateLeftOverRight(b) else rotateLeft(b))
-      // TODO: multi-repair left
-    } else {
-      // no rotations needed, just repair height
-      val h = 1 + math.max(hL, hR)
-      if (h != h0) {
-        b.height = h
-        repair(b.parent)
+    // only repair if we're not the root holder
+    if (h0 >= 0) {
+      val hL = b.left.height
+      val hR = b.right.height
+      val bal = hL - hR
+      if (bal > 1) {
+        // Both left and right are valid AVL trees, but left is too large so we
+        // must rotate right.  If this is from a bulk insertion or removal then
+        // left might be _much_ too large.  If left.right is larger than
+        // left.left then if we rotate right the result will have a -2 balance,
+        // so in that case we must first rotateLeft on left.  In either case, if
+        // bal > 2 then the right node of the result may need repair, which
+        // happens to be the new location of b.
+        replaceAndMaybeRepair(b, h0, if (balance(b.left) < 0) rotateRightOverLeft(b) else rotateRight(b))
+        if (bal > 2)
+          repair(b)
+      } else if (bal < -1) {
+        replaceAndMaybeRepair(b, h0, if (balance(b.right) > 0) rotateLeftOverRight(b) else rotateLeft(b))
+        if (bal < -2)
+          repair(b)
+      } else {
+        // no rotations needed, just repair height
+        val h = 1 + math.max(hL, hR)
+        if (h != h0) {
+          b.height = h
+          repair(b.parent)
+        }
       }
     }
   }

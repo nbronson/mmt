@@ -84,6 +84,8 @@ class FLTreeMap[A, +B](private val tree: FatLeafTree[A, _ <: B])
 
   override def firstKey = tree.firstKey
   override def lastKey = tree.lastKey
+  override def head = tree.head
+  override def last = tree.last
   override def compare(lhs: A, rhs: A): Int = tree.compare(lhs, rhs)
 
   override def + [B1 >: B] (kv: (A, B1)): FLTreeMap[A, B1] = updated(kv._1, kv._2)
