@@ -37,46 +37,27 @@ class FLTreeMap[A, +B](private val tree: FatLeafTree[A, _ <: B])
     with SortedMapLike[A, B, FLTreeMap[A, B]]
     with immutable.MapLike[A, B, FLTreeMap[A, B]] {
 
-  override protected[this] def newBuilder : Builder[(A, B), FLTreeMap[A, B]] = FLTreeMap.newBuilder[A, B]
-
   def this()(implicit ordering: Ordering[A], am: ClassManifest[A]) = this(FatLeafTree.empty[A, B])
 
-  override def rangeImpl(from: Option[A], until: Option[A]): FLTreeMap[A, B] = {
-    val t = tree.clone()
-    for (k <- from) t.removeLT(k)
-    for (k <- until) t.removeGE(k)
-    new FLTreeMap(t)
-  }
+  override protected[this] def newBuilder : Builder[(A, B), FLTreeMap[A, B]] = FLTreeMap.newBuilder[A, B]
 
-  override def firstKey = tree.firstKey
-  override def lastKey = tree.lastKey
-  override def compare(lhs: A, rhs: A): Int = tree.compare(lhs, rhs)
   implicit def ordering: Ordering[A] = tree.ordering
   private implicit def am: ClassManifest[A] = tree.am
 
   override def empty: FLTreeMap[A, B] = FLTreeMap.empty[A, B]
 
-  override def updated[B1 >: B](key: A, value: B1): FLTreeMap[A, B1] = {
-    val t = tree.clone().asInstanceOf[FatLeafTree[A, B1]]
-    t.put(key, value)
-    new FLTreeMap(t)
-  }
-
-
-  override def + [B1 >: B] (kv: (A, B1)): FLTreeMap[A, B1] = updated(kv._1, kv._2)
-
-  override def + [B1 >: B] (elem1: (A, B1), elem2: (A, B1), elems: (A, B1)*): FLTreeMap[A, B1] = {
-    val t = tree.clone().asInstanceOf[FatLeafTree[A, B1]]
-    t.put(elem1._1, elem1._2)
-    t.put(elem2._1, elem2._2)
-    for (e <- elems) t.put(e._1, e._2)
-    new FLTreeMap(t)
-  }
+  def get(key: A): Option[B] = tree.get(key)
 
   def insert[B1 >: B](key: A, value: B1): FLTreeMap[A, B1] = {
     val t = tree.clone().asInstanceOf[FatLeafTree[A, B1]]
     val prev = t.put(key, value)
     assert(prev.isEmpty)
+    new FLTreeMap(t)
+  }
+
+  override def updated[B1 >: B](key: A, value: B1): FLTreeMap[A, B1] = {
+    val t = tree.clone().asInstanceOf[FatLeafTree[A, B1]]
+    t.put(key, value)
     new FLTreeMap(t)
   }
 
@@ -90,19 +71,32 @@ class FLTreeMap[A, +B](private val tree: FatLeafTree[A, _ <: B])
     }
   }
 
-  override def get(key: A): Option[B] = tree.get(key)
+  def rangeImpl(from: Option[A], until: Option[A]): FLTreeMap[A, B] = {
+    val t = tree.clone()
+    for (k <- from) t.removeLT(k)
+    for (k <- until) t.removeGE(k)
+    new FLTreeMap(t)
+  }
 
   def iterator: Iterator[(A, B)] = tree.iterator
 
-  override def toList: List[(A, B)] = {
-    val buf = new ListBuffer[(A, B)]
-    tree.unstableForeach { (k, v) => buf += (k -> v) }
-    buf.result
+  //////// optimized overrides
+
+  override def firstKey = tree.firstKey
+  override def lastKey = tree.lastKey
+  override def compare(lhs: A, rhs: A): Int = tree.compare(lhs, rhs)
+
+  override def + [B1 >: B] (kv: (A, B1)): FLTreeMap[A, B1] = updated(kv._1, kv._2)
+
+  override def + [B1 >: B] (elem1: (A, B1), elem2: (A, B1), elems: (A, B1)*): FLTreeMap[A, B1] = {
+    val t = tree.clone().asInstanceOf[FatLeafTree[A, B1]]
+    t.put(elem1._1, elem1._2)
+    t.put(elem2._1, elem2._2)
+    for (e <- elems) t.put(e._1, e._2)
+    new FLTreeMap(t)
   }
 
-  override def toStream: Stream[(A, B)] = tree.iterator.toStream
-
-  override def foreach[U](f: ((A, B)) =>  U) = tree.stableForeach { (k, v) => f((k, v)) }
+  override def foreach[U](f: ((A, B)) =>  U) = tree.unstableForeach { (k, v) => f((k, v)) }
 }
 
 

@@ -323,7 +323,7 @@ abstract class FatLeafTree[@specialized A, B](
     val num = t.size
 
     // root node might be allocated less than LeafMax in size
-    if (num == t.values.length)
+    if (num == t.keys.length)
       growArrays(t)
 
     System.arraycopy(t.keys, i, t.keys, i + 1, num - i)
@@ -340,7 +340,7 @@ abstract class FatLeafTree[@specialized A, B](
   }
 
   private def growArrays(t: Lf) {
-    val nn = math.min(t.values.length * 2, LeafMax)
+    val nn = math.min(t.keys.length * 2, LeafMax)
     val kk = t.keys
     t.keys = new Array[A](nn)
     System.arraycopy(kk, 0, t.keys, 0, kk.length)
