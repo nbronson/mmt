@@ -25,6 +25,7 @@ object FatLeafTree {
 
   def LeafMin = 15
   def LeafMax = 2 * LeafMin + 1
+  def RootInitialCap = 4
 
   abstract class Node[A, B](var parent: Branch[A, B]) {
     def isEmpty: Boolean
@@ -42,10 +43,10 @@ object FatLeafTree {
 
   class Leaf[A, B](par0: Branch[A, B], 
                   var size: Int, 
-                  val keys: Array[A], 
-                  val values: Array[AnyRef]) extends Node[A, B](par0) {
+                  var keys: Array[A],
+                  var values: Array[AnyRef]) extends Node[A, B](par0) {
     def this(par0: Branch[A, B])(implicit am: ClassManifest[A]) =
-      this(par0, 0, new Array[A](LeafMax), new Array[AnyRef](LeafMax))
+      this(par0, 0, new Array[A](RootInitialCap), new Array[AnyRef](RootInitialCap))
 
     def isEmpty = size == 0
     def height = 1
@@ -320,6 +321,11 @@ abstract class FatLeafTree[@specialized A, B](
   private def leafInsert(t: Lf, i: Int, k: A, v: B) {
     // make space
     val num = t.size
+
+    // root node might be allocated less than LeafMax in size
+    if (num == t.values.length)
+      growArrays(t)
+
     System.arraycopy(t.keys, i, t.keys, i + 1, num - i)
     System.arraycopy(t.values, i, t.values, i + 1, num - i)
     t.size = num + 1
@@ -331,6 +337,16 @@ abstract class FatLeafTree[@specialized A, B](
     // split if necessary
     if (num + 1 == LeafMax)
       split(t)
+  }
+
+  private def growArrays(t: Lf) {
+    val nn = math.min(t.values.length * 2, LeafMax)
+    val kk = t.keys
+    t.keys = new Array[A](nn)
+    System.arraycopy(kk, 0, t.keys, 0, kk.length)
+    val vv = t.values
+    t.values = new Array[AnyRef](nn)
+    System.arraycopy(vv, 0, t.values, 0, vv.length)
   }
 
   private def split(tL: Lf) {
