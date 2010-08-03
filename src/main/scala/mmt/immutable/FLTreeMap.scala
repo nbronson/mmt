@@ -4,10 +4,10 @@ package immutable
 // FLTreeMap
 
 import scala.collection.generic._
-import scala.collection.{SortedMapLike, immutable}
 import scala.math.Ordering
 import scala.reflect.ClassManifest
-import scala.collection.mutable.{ListBuffer, Builder}
+import scala.collection.mutable.Builder
+import collection.{TraversableOnce, SortedMapLike, immutable}
 
 object FLTreeMap {
 
@@ -16,11 +16,29 @@ object FLTreeMap {
   def apply[A : Ordering : ClassManifest, B](elems: (A, B)*): FLTreeMap[A, B] = (newBuilder[A, B] ++= elems).result
 
   def newBuilder[A : Ordering : ClassManifest, B] = new Builder[(A, B), FLTreeMap[A, B]] {
-    private val tree = FatLeafTree.empty[A, B]
+    private var tree = FatLeafTree.empty[A, B]
 
     def clear() { tree.clear() }
     def result(): FLTreeMap[A, B] = { new FLTreeMap(tree.clone()) }
     def +=(elem: (A, B)): this.type = { tree.put(elem._1, elem._2) ; this }
+
+    override def ++=(xs: TraversableOnce[(A, B)]): this.type = {
+      xs match {
+        case flt: FLTreeMap[_, _] => append(flt.tree.asInstanceOf[FatLeafTree[A, B]])
+        case _ => super.++=(xs)
+      }
+      this
+    }
+
+    private def append(xs: FatLeafTree[A, B]) {
+      if (tree.isEmpty) {
+        tree = xs.clone()
+      } else {
+        val (lhs, rhs) = if (tree.size > xs.size) (tree, xs) else (xs.clone(), tree)
+        tree = lhs
+        rhs.unstableForeach { (k, v) => tree.put(k, v) }
+      }
+    }
   }
 
   class FLTreeMapCanBuildFrom[A : Ordering : ClassManifest, B] extends CanBuildFrom[FLTreeMap[_, _], (A, B), FLTreeMap[A, B]] {
@@ -32,7 +50,7 @@ object FLTreeMap {
       new FLTreeMapCanBuildFrom[A, B]
 }
 
-class FLTreeMap[A, +B](private val tree: FatLeafTree[A, _ <: B])
+class FLTreeMap[A, +B](private[FLTreeMap] val tree: FatLeafTree[A, _ <: B])
     extends immutable.SortedMap[A, B]
     with SortedMapLike[A, B, FLTreeMap[A, B]]
     with immutable.MapLike[A, B, FLTreeMap[A, B]] {
@@ -98,9 +116,9 @@ class FLTreeMap[A, +B](private val tree: FatLeafTree[A, _ <: B])
     new FLTreeMap(t)
   }
 
+  override def ++[B1 >: B](xs: TraversableOnce[(A, B1)]): FLTreeMap[A, B1] = {
+    (FLTreeMap.newBuilder[A, B1] ++= this ++= xs).result
+  }
+
   override def foreach[U](f: ((A, B)) =>  U) = tree.unstableForeach { (k, v) => f((k, v)) }
 }
-
-
-
-

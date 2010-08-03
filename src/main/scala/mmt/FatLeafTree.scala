@@ -699,8 +699,8 @@ abstract class FatLeafTree[@specialized A, B](
         // must rotate right.  If this is from a bulk insertion or removal then
         // left might be _much_ too large.  If left.right is larger than
         // left.left then if we rotate right the result will have a -2 balance,
-        // so in that case we must first rotateLeft on left.  In either case, if
-        // bal > 2 then the right node of the result may need repair, which
+        // so in that case we must first rotateLeft on left.  In either case,
+        // if bal > 2 then the right node of the result may need repair, which
         // happens to be the new location of b.
         replaceAndMaybeRepair(b, h0, if (balance(b.left) < 0) rotateRightOverLeft(b) else rotateRight(b))
         if (bal > 2)
