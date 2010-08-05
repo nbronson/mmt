@@ -24,20 +24,10 @@ object FLTreeMap {
 
     override def ++=(xs: TraversableOnce[(A, B)]): this.type = {
       xs match {
-        case flt: FLTreeMap[_, _] => append(flt.tree.asInstanceOf[FatLeafTree[A, B]])
+        case flt: FLTreeMap[_, _] => tree.putAll(flt.tree)
         case _ => super.++=(xs)
       }
       this
-    }
-
-    private def append(xs: FatLeafTree[A, B]) {
-      if (tree.isEmpty) {
-        tree = xs.clone()
-      } else {
-        val (lhs, rhs) = if (tree.size > xs.size) (tree, xs) else (xs.clone(), tree)
-        tree = lhs
-        rhs.unstableForeach { (k, v) => tree.put(k, v) }
-      }
     }
   }
 

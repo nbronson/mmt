@@ -100,6 +100,10 @@ object FatLeafTree {
       }
     }
 
+    private def unsharedPrev(): (Node[A, B], Int) {
+      
+    }
+
     def hasNext = depth > 0
 
     def next: Z = {
@@ -192,13 +196,53 @@ abstract class FatLeafTree[@specialized A, B](
   def contains(k: A): Boolean = contains(right, k)
   def get(k: A): Option[B] = get(right, k)
 
-  def put(k: A, v: B): Option[B] = put(unsharedRight(this), k, v)
-  def remove(k: A): Option[B] = remove(unsharedRight(this), k)
+  def put(k: A, v: B): Option[B] = {
+    val z = put(unsharedRight(this), k, v)
+    if (_cachedSize >= 0 && z.isEmpty)
+      _cachedSize += 1
+    z
+  }
 
-  def removeLT(k: A) { removeLT(unsharedRight(this), k) }
-  def removeLE(k: A) { removeLE(unsharedRight(this), k) }
-  def removeGE(k: A) { removeGE(unsharedRight(this), k) }
-  def removeGT(k: A) { removeGT(unsharedRight(this), k) }
+  def putAll[B1 <: B](rhs: FatLeafTree[A,B1]) {
+    if (isEmpty) {
+      right = rhs.frozenRoot.asInstanceOf[Br]
+      _cachedSize = rhs._cachedSize
+    } else if (!rhs.isEmpty) {
+      // extract the right-most element to use as a new root
+      val newRoot = new Br(this, 0, null.asInstanceOf[A], null.asInstanceOf[B], null, null)
+      copyAndRemoveMax(newRoot, right)
+
+      // the overlapping portion we must visit one-by-one, the distinct portion
+      // we can share
+      val overlap = rhs.clone().removeGT(newRoot.key)
+      val distinct = rhs.clone().removeLE(newRoot.key)
+
+      newRoot.left = right
+      newRoot.right = distinct
+      right = newRoot
+      repair(newRoot)
+
+      if (_cachedSize >= 0 && distinct._cachedSize >= 0)
+        _cachedSize += distinct._cachedSize
+      else
+        _cachedSize = -1
+
+      // now handle the rest
+      overlap.unstableForeach { (k, v) => put(k, v) }
+    }
+  }
+
+  def remove(k: A): Option[B] = {
+    val z = remove(unsharedRight(this), k)
+    if (_cachedSize >= 0 && !z.isEmpty)
+      _cachedSize -= 1
+    z
+  }
+
+  def removeLT(k: A): this.type = { if (removeLT(unsharedRight(this), k, false)) _cachedSize = -1 ; this }
+  def removeLE(k: A): this.type = { if (removeLE(unsharedRight(this), k, false)) _cachedSize = -1 ; this }
+  def removeGE(k: A): this.type = { if (removeGE(unsharedRight(this), k, false)) _cachedSize = -1 ; this }
+  def removeGT(k: A): this.type = { if (removeGT(unsharedRight(this), k, false)) _cachedSize = -1 ; this }
 
   def keysIterator: Iterator[A] = new Iter[A, B, A](frozenRoot) {
     protected def result(k: A, v: B) = k
@@ -325,8 +369,6 @@ abstract class FatLeafTree[@specialized A, B](
       Some(z)
     } else {
       leafInsert(t, ~i, k, v)
-      if (_cachedSize >= 0)
-        _cachedSize += 1
       None
     }
   }
@@ -412,8 +454,6 @@ abstract class FatLeafTree[@specialized A, B](
       if (c == 0) {
         val z = b.value
         copyAndRemoveMax(b, unsharedLeft(b))
-        if (_cachedSize >= 0)
-          _cachedSize -= 1
         return Some(z)
       } else {
         remove(if (c < 0) unsharedLeft(b) else unsharedRight(b), k)
@@ -426,8 +466,6 @@ abstract class FatLeafTree[@specialized A, B](
     if (i >= 0) {
       val z = t.getValue(i)
       leafRemoveByIndex(t, i)
-      if (_cachedSize >= 0)
-        _cachedSize -= 1
       Some(z)
     } else {
       None
@@ -523,12 +561,16 @@ abstract class FatLeafTree[@specialized A, B](
     tL.size += 1 + tR.size
     tL.parent = b.parent
 
+    // b and tR are now removed
+    b.markUnlinked()
+    tR.markUnlinked()
+
     replaceAndRepair(b, tL)
   }
 
   //////// bulk removal
 
-  @tailrec private def removeLT(n: Nd, k: A) {
+  @tailrec private def removeLT(n: Nd, k: A, z: Boolean): Boolean = {
     n match {
       case t: Lf => {
         val i = keySearch(t, k)
@@ -536,26 +578,28 @@ abstract class FatLeafTree[@specialized A, B](
           leafRemoveByIndex(t, 0, i)
         else
           leafRemoveByIndex(t, 0, ~i)
+        z
       }
       case b: Br => {
         val c = compare(k, b.key)
         if (c < 0) {
-          removeLT(unsharedLeft(b), k)
+          removeLT(unsharedLeft(b), k, z)
         } else {
-          _cachedSize = -1
           val nR = unsharedRight(b)
           nR.parent = b.parent
           replaceAndRepair(b, nR)
-          if (c == 0)
+          if (c == 0) {
             put(nR, b.key, b.value)
-          else
-            removeLT(nR, k)
+            true
+          } else {
+            removeLT(nR, k, true)
+          }
         }
       }
     }
   }
 
-  @tailrec private def removeLE(n: Nd, k: A) {
+  @tailrec private def removeLE(n: Nd, k: A, z: Boolean): Boolean = {
     n match {
       case t: Lf => {
         val i = keySearch(t, k)
@@ -563,24 +607,23 @@ abstract class FatLeafTree[@specialized A, B](
           leafRemoveByIndex(t, 0, i + 1)
         else
           leafRemoveByIndex(t, 0, ~i)
+        z
       }
       case b: Br => {
         val c = compare(k, b.key)
         if (c < 0) {
-          removeLE(unsharedLeft(b), k)
+          removeLE(unsharedLeft(b), k, z)
         } else {
-          _cachedSize = -1
           val nR = unsharedRight(b)
           nR.parent = b.parent
           replaceAndRepair(b, nR)
-          if (c > 0)
-            removeLE(nR, k)
+          (c <= 0) || removeLE(nR, k, true)
         }
       }
     }
   }
 
-  @tailrec private def removeGE(n: Nd, k: A) {
+  @tailrec private def removeGE(n: Nd, k: A, z: Boolean): Boolean = {
     n match {
       case t: Lf => {
         val i = keySearch(t, k)
@@ -588,24 +631,23 @@ abstract class FatLeafTree[@specialized A, B](
           leafRemoveByIndex(t, i, t.size)
         else
           leafRemoveByIndex(t, ~i, t.size)
+        z
       }
       case b: Br => {
         val c = compare(k, b.key)
         if (c <= 0) {
-          _cachedSize = -1
           val nL = unsharedLeft(b)
           nL.parent = b.parent
           replaceAndRepair(b, nL)
-          if (c < 0)
-            removeGE(nL, k)
+          (c >= 0) || removeGE(nL, k, true)
         } else {
-          removeGE(unsharedRight(b), k)
+          removeGE(unsharedRight(b), k, z)
         }
       }
     }
   }
 
-  @tailrec private def removeGT(n: Nd, k: A) {
+  @tailrec private def removeGT(n: Nd, k: A, z: Boolean): Boolean = {
     n match {
       case t: Lf => {
         val i = keySearch(t, k)
@@ -613,20 +655,22 @@ abstract class FatLeafTree[@specialized A, B](
           leafRemoveByIndex(t, i + 1, t.size)
         else
           leafRemoveByIndex(t, ~i, t.size)
+        z
       }
       case b: Br => {
         val c = compare(k, b.key)
         if (c <= 0) {
-          _cachedSize = -1
           val nL = unsharedLeft(b)
           nL.parent = b.parent
           replaceAndRepair(b, nL)
-          if (c < 0)
-            removeGT(nL, k)
-          else
+          if (c < 0) {
+            removeGT(nL, k, true)
+          } else {
             put(nL, b.key, b.value)
+            true
+          }
         } else {
-          removeGT(unsharedRight(b), k)
+          removeGT(unsharedRight(b), k, z)
         }
       }
     }
@@ -644,9 +688,6 @@ abstract class FatLeafTree[@specialized A, B](
       clear(t, num, n)
       if (num < LeafMin)
         refill(t)
-
-      if (_cachedSize >= 0)
-        _cachedSize -= n
     }
   }
 
@@ -732,6 +773,7 @@ abstract class FatLeafTree[@specialized A, B](
   }
 
   private def replace(n0: Nd, n: Nd) {
+    assert(n0.unlinked)
     val p = n.parent
     if (p.left eq n0) p.left = n else p.right = n
   }
