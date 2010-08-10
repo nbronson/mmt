@@ -239,7 +239,7 @@ object BTree2 {
       numKeys += 1
     }
 
-    @inline def clear[T](a: Array[T], pos: Int, len: Int) {
+    @inline final def clear[T](a: Array[T], pos: Int, len: Int) {
       var i = 0
       while (i < len) { a(pos + i) = null.asInstanceOf[T] ; i += 1 }
     }
