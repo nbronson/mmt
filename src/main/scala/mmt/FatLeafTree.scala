@@ -100,10 +100,6 @@ object FatLeafTree {
       }
     }
 
-    private def unsharedPrev(): (Node[A, B], Int) {
-      
-    }
-
     def hasNext = depth > 0
 
     def next: Z = {
@@ -203,37 +199,37 @@ abstract class FatLeafTree[@specialized A, B](
     z
   }
 
-  def putAll[B1 <: B](rhs: FatLeafTree[A,B1]) {
-    if (isEmpty) {
-      right = rhs.frozenRoot.asInstanceOf[Br]
-      _cachedSize = rhs._cachedSize
-    } else if (!rhs.isEmpty) {
-      // extract the right-most element to use as a new root
-      val newRoot = new Br(this, 0, null.asInstanceOf[A], null.asInstanceOf[B], null, null)
-      copyAndRemoveMax(newRoot, right)
-
-      // the overlapping portion we must visit one-by-one, the distinct portion
-      // we can share
-      val overlap = rhs.clone().removeGT(newRoot.key)
-      val distinct = rhs.clone().removeLE(newRoot.key)
-
-      newRoot.left = right
-      newRoot.right = distinct
-      right = newRoot
-      repair(newRoot)
-
-      if (_cachedSize >= 0 && distinct._cachedSize >= 0)
-        _cachedSize += distinct._cachedSize
-      else
-        _cachedSize = -1
-
-      // now handle the rest
-      overlap.unstableForeach { (k, v) => put(k, v) }
-    }
-  }
+//  def putAll(rhs: FatLeafTree[A, _ <: B]) {
+//    if (isEmpty) {
+//      right = rhs.frozenRoot.asInstanceOf[Nd]
+//      _cachedSize = rhs._cachedSize
+//    } else if (!rhs.isEmpty) {
+//      // extract the right-most element to use as a new root
+//      val newRoot = new Br(this, 0, null.asInstanceOf[A], null.asInstanceOf[B], null, null)
+//      copyAndRemoveMax(newRoot, right)
+//
+//      // the overlapping portion we must visit one-by-one, the distinct portion
+//      // we can share
+//      val overlap = rhs.clone().removeGT(newRoot.key)
+//      val distinct = rhs.clone().removeLE(newRoot.key)
+//
+//      newRoot.left = right
+//      newRoot.right = distinct.right.asInstanceOf[Nd]
+//      right = newRoot
+//      repair(newRoot)
+//
+//      if (_cachedSize >= 0 && distinct._cachedSize >= 0)
+//        _cachedSize += distinct._cachedSize
+//      else
+//        _cachedSize = -1
+//
+//      // now handle the rest
+//      overlap.unstableForeach { (k, v) => put(k, v) }
+//    }
+//  }
 
   def remove(k: A): Option[B] = {
-    val z = remove(unsharedRight(this), k)
+    val z = if (isShared(right)) removeFromShared(this, right, k) else remove(right, k)
     if (_cachedSize >= 0 && !z.isEmpty)
       _cachedSize -= 1
     z
@@ -243,6 +239,11 @@ abstract class FatLeafTree[@specialized A, B](
   def removeLE(k: A): this.type = { if (removeLE(unsharedRight(this), k, false)) _cachedSize = -1 ; this }
   def removeGE(k: A): this.type = { if (removeGE(unsharedRight(this), k, false)) _cachedSize = -1 ; this }
   def removeGT(k: A): this.type = { if (removeGT(unsharedRight(this), k, false)) _cachedSize = -1 ; this }
+
+//  def filter(f: (A, B) => Boolean): this.type = {
+//    filter(right, f)
+//    _cachedSize = -1
+//  }
 
   def keysIterator: Iterator[A] = new Iter[A, B, A](frozenRoot) {
     protected def result(k: A, v: B) = k
@@ -452,13 +453,39 @@ abstract class FatLeafTree[@specialized A, B](
     case b: Br => {
       val c = compare(k, b.key)
       if (c == 0) {
-        val z = b.value
-        copyAndRemoveMax(b, unsharedLeft(b))
-        return Some(z)
+        branchRemove(b)
       } else {
-        remove(if (c < 0) unsharedLeft(b) else unsharedRight(b), k)
+        val child = if (c < 0) left else right
+        if (isShared(child))
+          removeFromShared(b, child, k)
+        else
+          remove(child, k)
       }
     }
+  }
+
+  private def removeFromShared(p: Br, child: Nd, k: A): Option[B] = {
+    if (!contains(child, k))
+      None
+    else
+      removeContained(if (child eq p.right) unsharedRight(p) else unsharedLeft(p), k)
+  }
+
+  @tailrec private def removeContained(n: Nd, k: A): Option[B] = n match {
+    case t: Lf => leafRemove(t, k)
+    case b: Br => {
+      val c = compare(k, b.key)
+      if (c == 0)
+        branchRemove(b)
+      else
+        removeContained(if (c < 0) unsharedLeft(b) else unsharedRight(b), k)
+    }
+  }
+
+  private def branchRemove(b: Br): Option[B] = {
+    val z = b.value
+    copyAndRemoveMax(b, unsharedLeft(b))
+    Some(z)
   }
 
   private def leafRemove(t: Lf, k: A): Option[B] = {
@@ -560,10 +587,6 @@ abstract class FatLeafTree[@specialized A, B](
     System.arraycopy(tR.values, 0, tL.values, tL.size + 1, tR.size)
     tL.size += 1 + tR.size
     tL.parent = b.parent
-
-    // b and tR are now removed
-    b.markUnlinked()
-    tR.markUnlinked()
 
     replaceAndRepair(b, tL)
   }
@@ -693,14 +716,22 @@ abstract class FatLeafTree[@specialized A, B](
 
   //////// sharing machinery
 
+  private def isShared(n: Nd) = n.parent == null
+  
+  private def markShared(n: Nd): Nd = {
+    if (n.parent != null)
+      n.parent = null
+    n
+  }
+
   private def unsharedLeft(b: Br): Nd = {
-    if (b.left.parent == null)
+    if (isShared(b.left))
       b.left = unshare(b.left, b)
     b.left
   }
 
   private def unsharedRight(b: Br): Nd = {
-    if (b.right.parent == null)
+    if (isShared(b.right))
       b.right = unshare(b.right, b)
     b.right
   }
@@ -712,12 +743,6 @@ abstract class FatLeafTree[@specialized A, B](
       markShared(b.left)
       markShared(b.right)
       new Br(p, b.height, b.key, b.value, b.left, b.right)
-  }
-
-  private def markShared(n: Nd): Nd = {
-    if (n.parent != null)
-      n.parent = null
-    n
   }
 
   //////// AVL rebalancing
@@ -773,7 +798,6 @@ abstract class FatLeafTree[@specialized A, B](
   }
 
   private def replace(n0: Nd, n: Nd) {
-    assert(n0.unlinked)
     val p = n.parent
     if (p.left eq n0) p.left = n else p.right = n
   }

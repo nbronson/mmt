@@ -22,13 +22,14 @@ object FLTreeMap {
     def result(): FLTreeMap[A, B] = { new FLTreeMap(tree.clone()) }
     def +=(elem: (A, B)): this.type = { tree.put(elem._1, elem._2) ; this }
 
-    override def ++=(xs: TraversableOnce[(A, B)]): this.type = {
-      xs match {
-        case flt: FLTreeMap[_, _] => tree.putAll(flt.tree)
-        case _ => super.++=(xs)
-      }
-      this
-    }
+    // TODO: reenable
+//    override def ++=(xs: TraversableOnce[(A, B)]): this.type = {
+//      xs match {
+//        case flt: FLTreeMap[A, B] => tree.putAll(flt.tree)
+//        case _ => super.++=(xs)
+//      }
+//      this
+//    }
   }
 
   class FLTreeMapCanBuildFrom[A : Ordering : ClassManifest, B] extends CanBuildFrom[FLTreeMap[_, _], (A, B), FLTreeMap[A, B]] {
@@ -40,7 +41,8 @@ object FLTreeMap {
       new FLTreeMapCanBuildFrom[A, B]
 }
 
-class FLTreeMap[A, +B](private[FLTreeMap] val tree: FatLeafTree[A, _ <: B])
+// TODO: should be +B, currently this gives a compiler error
+class FLTreeMap[A, B](private[FLTreeMap] val tree: FatLeafTree[A, B])
     extends immutable.SortedMap[A, B]
     with SortedMapLike[A, B, FLTreeMap[A, B]]
     with immutable.MapLike[A, B, FLTreeMap[A, B]] {
