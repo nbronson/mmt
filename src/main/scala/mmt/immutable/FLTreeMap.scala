@@ -22,14 +22,13 @@ object FLTreeMap {
     def result(): FLTreeMap[A, B] = { new FLTreeMap(tree.clone()) }
     def +=(elem: (A, B)): this.type = { tree.put(elem._1, elem._2) ; this }
 
-    // TODO: reenable
-//    override def ++=(xs: TraversableOnce[(A, B)]): this.type = {
-//      xs match {
-//        case flt: FLTreeMap[A, B] => tree.putAll(flt.tree)
-//        case _ => super.++=(xs)
-//      }
-//      this
-//    }
+    override def ++=(xs: TraversableOnce[(A, B)]): this.type = {
+      xs match {
+        case flt: FLTreeMap[A, B] => tree.putAll(flt.tree)
+        case _ => super.++=(xs)
+      }
+      this
+    }
   }
 
   class FLTreeMapCanBuildFrom[A : Ordering : ClassManifest, B] extends CanBuildFrom[FLTreeMap[_, _], (A, B), FLTreeMap[A, B]] {

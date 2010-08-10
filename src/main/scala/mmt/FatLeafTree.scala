@@ -199,34 +199,34 @@ abstract class FatLeafTree[@specialized A, B](
     z
   }
 
-//  def putAll(rhs: FatLeafTree[A, _ <: B]) {
-//    if (isEmpty) {
-//      right = rhs.frozenRoot.asInstanceOf[Nd]
-//      _cachedSize = rhs._cachedSize
-//    } else if (!rhs.isEmpty) {
-//      // extract the right-most element to use as a new root
-//      val newRoot = new Br(this, 0, null.asInstanceOf[A], null.asInstanceOf[B], null, null)
-//      copyAndRemoveMax(newRoot, right)
-//
-//      // the overlapping portion we must visit one-by-one, the distinct portion
-//      // we can share
-//      val overlap = rhs.clone().removeGT(newRoot.key)
-//      val distinct = rhs.clone().removeLE(newRoot.key)
-//
-//      newRoot.left = right
-//      newRoot.right = distinct.right.asInstanceOf[Nd]
-//      right = newRoot
-//      repair(newRoot)
-//
-//      if (_cachedSize >= 0 && distinct._cachedSize >= 0)
-//        _cachedSize += distinct._cachedSize
-//      else
-//        _cachedSize = -1
-//
-//      // now handle the rest
-//      overlap.unstableForeach { (k, v) => put(k, v) }
-//    }
-//  }
+  def putAll(rhs: FatLeafTree[A, _ <: B]) {
+    if (isEmpty) {
+      right = rhs.frozenRoot.asInstanceOf[Nd]
+      _cachedSize = rhs._cachedSize
+    } else if (!rhs.isEmpty) {
+      // extract the right-most element to use as a new root
+      val newRoot = new Br(this, 0, null.asInstanceOf[A], null.asInstanceOf[B], null, null)
+      copyAndRemoveMax(newRoot, right)
+
+      // the overlapping portion we must visit one-by-one, the distinct portion
+      // we can share
+      val overlap = rhs.clone().removeGT(newRoot.key)
+      val distinct = rhs.clone().removeLE(newRoot.key)
+
+      newRoot.left = right
+      newRoot.right = distinct.right.asInstanceOf[Nd]
+      right = newRoot
+      repair(newRoot)
+
+      if (_cachedSize >= 0 && distinct._cachedSize >= 0)
+        _cachedSize += distinct._cachedSize
+      else
+        _cachedSize = -1
+
+      // now handle the rest
+      overlap.unstableForeach { (k, v) => put(k, v) }
+    }
+  }
 
   def remove(k: A): Option[B] = {
     val z = if (isShared(right)) removeFromShared(this, right, k) else remove(right, k)
