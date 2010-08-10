@@ -7,17 +7,17 @@ object FatLeafTree {
 
   //////// factory method
 
-  def empty[A : Ordering : ClassManifest, B]: FatLeafTree[A, B] = {
-    (implicitly[Ordering[A]] match {
-      case Ordering.Boolean => new DefaultBoolean()
-      case Ordering.Byte    => new DefaultByte()
-      case Ordering.Short   => new DefaultShort()
-      case Ordering.Char    => new DefaultChar()
-      case Ordering.Int     => new DefaultInt()
-      case Ordering.Float   => new DefaultFloat()
-      case Ordering.Long    => new DefaultLong()
-      case Ordering.Double  => new DefaultDouble()
-      case _                => new Generic()
+  def empty[A, B](implicit cmp: Ordering[A], am: ClassManifest[A]): FatLeafTree[A, B] = {
+    (cmp.asInstanceOf[Ordering[_]] match {
+      case Ordering.Boolean => new DefaultBoolean[B]()
+      case Ordering.Byte    => new DefaultByte[B]()
+      case Ordering.Short   => new DefaultShort[B]()
+      case Ordering.Char    => new DefaultChar[B]()
+      case Ordering.Int     => new DefaultInt[B]()
+      case Ordering.Float   => new DefaultFloat[B]()
+      case Ordering.Long    => new DefaultLong[B]()
+      case Ordering.Double  => new DefaultDouble[B]()
+      case _                => new Generic[A, B]()
     }).asInstanceOf[FatLeafTree[A, B]]
   }
 
