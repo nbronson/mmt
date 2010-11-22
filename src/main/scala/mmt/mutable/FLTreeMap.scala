@@ -1,13 +1,13 @@
 package mmt
-package immutable
+package mutable
 
 // FLTreeMap
 
 import scala.collection.generic._
 import scala.math.Ordering
 import scala.reflect.ClassManifest
-import scala.collection.mutable.Builder
-import collection.{TraversableOnce, SortedMapLike, immutable}
+import collection.{TraversableOnce, SortedMapLike, mutable}
+import mutable.{MapLike, Builder}
 
 object FLTreeMap {
 
@@ -15,21 +15,7 @@ object FLTreeMap {
 
   def apply[A : Ordering : ClassManifest, B](elems: (A, B)*): FLTreeMap[A, B] = (newBuilder[A, B] ++= elems).result
 
-  def newBuilder[A : Ordering : ClassManifest, B] = new Builder[(A, B), FLTreeMap[A, B]] {
-    private var tree = FatLeafTree.empty[A, B]
-
-    def clear() { tree.clear() }
-    def result(): FLTreeMap[A, B] = { val t = tree ; tree = null ; new FLTreeMap(t) }
-    def +=(elem: (A, B)): this.type = { tree.put(elem._1, elem._2) ; this }
-
-    override def ++=(xs: TraversableOnce[(A, B)]): this.type = {
-      xs match {
-        case flt: FLTreeMap[A, B] => tree.putAll(flt.tree)
-        case _ => super.++=(xs)
-      }
-      this
-    }
-  }
+  def newBuilder[A : Ordering : ClassManifest, B] = empty[A, B]
 
   class FLTreeMapCanBuildFrom[A : Ordering : ClassManifest, B] extends CanBuildFrom[FLTreeMap[_, _], (A, B), FLTreeMap[A, B]] {
     def apply(from: FLTreeMap[_, _]) = newBuilder[A, B]
@@ -40,10 +26,12 @@ object FLTreeMap {
       new FLTreeMapCanBuildFrom[A, B]
 }
 
-class FLTreeMap[A, +B](private[FLTreeMap] val tree: FatLeafTree[A, _ <: B])
-    extends immutable.SortedMap[A, B]
+class FLTreeMap[A, B](private[FLTreeMap] val tree: FatLeafTree[A, B])
+    extends scala.collection.SortedMap[A, B]
+    with mutable.Map[A, B]
     with SortedMapLike[A, B, FLTreeMap[A, B]]
-    with immutable.MapLike[A, B, FLTreeMap[A, B]] {
+    with mutable.MapLike[A, B, FLTreeMap[A, B]]
+    with Builder[(A, B), FLTreeMap[A, B]] {
 
   def this()(implicit ordering: Ordering[A], am: ClassManifest[A]) = this(FatLeafTree.empty[A, B])
 
@@ -56,28 +44,17 @@ class FLTreeMap[A, +B](private[FLTreeMap] val tree: FatLeafTree[A, _ <: B])
 
   def get(key: A): Option[B] = tree.get(key)
 
-  def insert[B1 >: B](key: A, value: B1): FLTreeMap[A, B1] = {
-    val t = tree.clone().asInstanceOf[FatLeafTree[A, B1]]
-    val prev = t.put(key, value)
-    assert(prev.isEmpty)
-    new FLTreeMap(t)
-  }
+  def +=(kv: (A, B)): this.type = { tree.put(kv._1, kv._2) ; this }
 
-  override def updated[B1 >: B](key: A, value: B1): FLTreeMap[A, B1] = {
-    val t = tree.clone().asInstanceOf[FatLeafTree[A, B1]]
-    t.put(key, value)
-    new FLTreeMap(t)
-  }
-
-  def - (key: A): FLTreeMap[A, B] = {
-    if (!tree.contains(key))
-      this
-    else {
-      val t = tree.clone()
-      t.remove(key)
-      new FLTreeMap(t)
+  override def ++= (xs: TraversableOnce[(A, B)]): this.type = {
+    xs match {
+      case flt: FLTreeMap[A, B] => tree.putAll(flt.tree)
+      case _ => super.++=(xs)
     }
+    this
   }
+
+  def -=(key: A): this.type = { tree.remove(key) ; this }
 
   def rangeImpl(from: Option[A], until: Option[A]): FLTreeMap[A, B] = {
     val t = tree.clone()
@@ -88,10 +65,12 @@ class FLTreeMap[A, +B](private[FLTreeMap] val tree: FatLeafTree[A, _ <: B])
 
   def iterator: Iterator[(A, B)] = tree.iterator
 
+  // TODO: is it possible to use immutableClone for toMap?
+
   //////// multi-mode stuff
 
-  override def clone: FLTreeMap[A, B] = this
-  def mutableClone[B1 >: B]: mutable.FLTreeMap[A, B1] = new mutable.FLTreeMap[A, B1](tree.clone().asInstanceOf[FatLeafTree[A, B1]])
+  override def clone: FLTreeMap[A, B] = new FLTreeMap[A, B](tree.clone())
+  def immutableClone: immutable.FLTreeMap[A, B] = new immutable.FLTreeMap[A, B](tree.clone())
 
   //////// optimized overrides
 
@@ -100,6 +79,12 @@ class FLTreeMap[A, +B](private[FLTreeMap] val tree: FatLeafTree[A, _ <: B])
   override def head = tree.head
   override def last = tree.last
   override def compare(lhs: A, rhs: A): Int = tree.compare(lhs, rhs)
+
+  override def updated[B1 >: B](key: A, value: B1): FLTreeMap[A, B1] = {
+    val t = tree.clone().asInstanceOf[FatLeafTree[A, B1]]
+    t.put(key, value)
+    new FLTreeMap(t)
+  }
 
   override def + [B1 >: B] (kv: (A, B1)): FLTreeMap[A, B1] = updated(kv._1, kv._2)
 
@@ -115,5 +100,5 @@ class FLTreeMap[A, +B](private[FLTreeMap] val tree: FatLeafTree[A, _ <: B])
     (FLTreeMap.newBuilder[A, B1] ++= this ++= xs).result
   }
 
-  override def foreach[U](f: ((A, B)) =>  U) = tree.unstableForeach { (k, v) => f((k, v)) }
+  override def foreach[U](f: ((A, B)) =>  U) = tree.stableForeach { (k, v) => f((k, v)) }
 }

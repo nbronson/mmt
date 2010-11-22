@@ -33,18 +33,18 @@ object FatLeafTree {
   }
 
   class Branch[A, B](par0: Branch[A, B], 
-                    var height: Int, 
-                    var key: A, 
-                    var value: B, 
-                    var left: Node[A, B], 
-                    var right: Node[A, B]) extends Node[A, B](par0) {
+                     var height: Int,
+                     var key: A,
+                     var value: B,
+                     var left: Node[A, B],
+                     var right: Node[A, B]) extends Node[A, B](par0) {
     def isEmpty = false
   }
 
   class Leaf[A, B](par0: Branch[A, B], 
-                  var size: Int, 
-                  var keys: Array[A],
-                  var values: Array[AnyRef]) extends Node[A, B](par0) {
+                   var size: Int,
+                   var keys: Array[A],
+                   var values: Array[AnyRef]) extends Node[A, B](par0) {
     def this(par0: Branch[A, B])(implicit am: ClassManifest[A]) =
       this(par0, 0, new Array[A](RootInitialCap), new Array[AnyRef](RootInitialCap))
 
@@ -265,6 +265,41 @@ abstract class FatLeafTree[@specialized A, B](
 
   private def frozenRoot: Node[A, B] = markShared(right)
 
+  def validateTree {
+    def recurse(n: Nd): Int = {
+      n match {
+        case t: Lf => {
+          assert(t.size <= LeafMax)
+          if (t ne this.right)
+            assert(t.size >= LeafMin)
+          t.size
+        }
+        case b: Br => {
+          assert(b.left != null)
+          assert(b.right != null)
+          assert(math.abs(balance(b)) <= 1)
+          assert(b.height == math.max(b.left.height, b.right.height) + 1)
+          recurse(b.left) + 1 + recurse(b.right)
+        }
+      }
+    }
+
+    assert(left == null)
+    assert(height == -1)
+    val s = recurse(right)
+    assert(s == computeSize(right))
+    if (_cachedSize >= 0)
+      assert(s == _cachedSize)
+    var prev: Option[A] = None
+    var count = 0
+    unstableForeach { (k,v) =>
+      count += 1
+      for (p <- prev) assert(ordering.compare(p, k) < 0)
+      prev = Some(k)
+    }
+    assert(count == s)
+  }
+
   //////// size
 
   private def sizeImpl: Int = {
@@ -455,7 +490,7 @@ abstract class FatLeafTree[@specialized A, B](
       if (c == 0) {
         branchRemove(b)
       } else {
-        val child = if (c < 0) left else right
+        val child = if (c < 0) b.left else b.right
         if (isShared(child))
           removeFromShared(b, child, k)
         else
